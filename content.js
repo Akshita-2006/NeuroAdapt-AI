@@ -97,6 +97,7 @@ function initNeuroAdapt() {
           alternatives  = [],   // additional hint phrasings for multi-hint expansion
           elementType   = null, // expected HTML element type from step metadata
           preferredZone = null, // expected page zone from step metadata
+          action        = null, // planned action (click/type/select/check) from step metadata
         } = message;
 
         if (!targetHint) {
@@ -116,7 +117,7 @@ function initNeuroAdapt() {
           // by best score per element. This handles synonym/paraphrase misses
           // that a single-hint ranking would miss entirely.
           const allHints    = [targetHint, ...alternatives.slice(0, 3)];
-          const stepMeta    = { preferredZone, elementType };
+          const stepMeta    = { preferredZone, elementType, action };
           const mergedScores = new Map(); // ref → { node, score, reasons }
 
           for (const h of allHints) {
@@ -237,7 +238,7 @@ function initNeuroAdapt() {
                 candidates: serialised,
                 pageUrl:    window.location.href,
                 pageTitle:  document.title,
-                stepMeta:   { targetLabel: targetHint, elementType, zone: preferredZone, alternatives },
+                stepMeta:   { targetLabel: targetHint, elementType, zone: preferredZone, alternatives, action },
               },
               (r) => resolve(chrome.runtime.lastError ? null : r)
             );

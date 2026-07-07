@@ -124,8 +124,10 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
                      n.element?.getAttribute?.('type') === 'submit',
     link:     (n) => n.tag === 'a',
     anchor:   (n) => n.tag === 'a',
-    input:    (n) => ['input','textarea'].includes(n.tag) || n.role === 'textbox',
-    field:    (n) => ['input','textarea','select'].includes(n.tag) || n.role === 'textbox',
+    input:    (n) => (n.tag === 'textarea' || n.role === 'textbox') ||
+                     (n.tag === 'input' && !['checkbox','radio','submit','button','reset','image','file'].includes(n.type)),
+    field:    (n) => (['textarea','select'].includes(n.tag) || n.role === 'textbox') ||
+                     (n.tag === 'input' && !['checkbox','radio','submit','button','reset','image','file'].includes(n.type)),
     textbox:  (n) => n.tag === 'textarea' || n.role === 'textbox' ||
                      (n.tag === 'input' && (!n.type || n.type === 'text' || n.type === 'email' || n.type === 'search')),
     dropdown: (n) => n.tag === 'select' || n.role === 'combobox' || n.role === 'listbox',
@@ -161,6 +163,25 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
 
   const TYPE_KEYWORDS = new Set(Object.keys(TYPE_MAP));
 
+  // Keywords describing a *semantic* field flavor (inferred from name/aria/
+  // placeholder text) rather than a hard structural constraint. Many real
+  // login/username fields are type="text" despite being conceptually an
+  // "email" field, so a mismatch here shouldn't be treated as strongly wrong
+  // as e.g. a "button" hint landing on a checkbox.
+  const SOFT_TYPE_KEYWORDS = new Set(['email', 'phone', 'mobile', 'search']);
+
+  // Element types that can never receive typed text, no matter how well
+  // their accessible label matches a "type" step's hint. A checkbox captioned
+  // "Email me weekly deals" is not an email field just because its label
+  // contains the word "email" — it structurally cannot be one.
+  const TEXT_ENTRY_ELEMENT_TYPES = new Set(['input', 'field', 'textbox']);
+  function isNonTextEnterable(n) {
+    if (n.tag === 'textarea' || n.role === 'textbox') return false;
+    if (n.tag === 'input') return ['checkbox', 'radio', 'submit', 'button', 'reset', 'image', 'file'].includes(n.type);
+    return n.tag === 'button' || n.tag === 'a' || n.role === 'button' || n.role === 'link' ||
+           n.role === 'checkbox' || n.role === 'radio';
+  }
+
   const PURE_TYPE_DESCRIPTORS = new Set([
     'button','link','anchor','input','field','textbox','dropdown',
     'select','checkbox','radio','textarea','tab','menu','form',
@@ -180,6 +201,8 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     tagPenalty:      -10,
     tagNoConstraint:   3,
     metaTypeBonus:     8,   // elementType from stepMeta when hint has no type constraint
+    metaTypePenalty:  -10,  // stepMeta.elementType (e.g. "input" for a type action) structurally
+                            // incompatible with this node (e.g. a checkbox/button can't be typed into)
     contextMax:       15,
     viewportIn:       10,
     viewportNear:      4,
@@ -273,7 +296,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
   // ══════════════════════════════════════════════════════════════════════════
 
   function labelSimilarity(node, contentTokens) {
-    if (!contentTokens.length) return 0;
+    if (!contentTokens.length) return { sim: 0, exact: false };
 
     const dataAttrText = node.dataAttrs
       ? Object.values(node.dataAttrs).map((v) => v.replace(/[-_]/g, ' ')).join(' ')
@@ -291,9 +314,10 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       node.href?.replace(/[-_/]/g, ' '), // link href text (e.g. /sign-in → sign in)
     ].filter(Boolean).join(' '));
 
-    // Exact match on primary label
+    // Exact match on primary label — the node's own label IS the hint, not
+    // just a longer string that happens to contain it somewhere.
     const hintPhrase = contentTokens.join(' ');
-    if (_norm(node.label) === hintPhrase) return 1.0;
+    if (_norm(node.label) === hintPhrase) return { sim: 1.0, exact: true };
 
     let matched = 0;
     for (const token of contentTokens) {
@@ -302,14 +326,14 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       if (hit) {
         matched++;
       } else {
-        const words = allText.split(' ');
+        const words = allText.split(' ').filter((w) => w.length >= 3);
         if (words.some((w) => w.startsWith(token) || (token.startsWith(w) && token.length >= 4))) {
           matched += 0.5;
         }
       }
     }
 
-    return matched / contentTokens.length;
+    return { sim: matched / contentTokens.length, exact: false };
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -323,10 +347,19 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
 
     if (!contentTokens.length) return { score: 0, reasons: ['empty hint'] };
 
-    // ── 1. LABEL SIMILARITY (0–50) ─────────────────────────────────────────
-    const sim = labelSimilarity(node, contentTokens);
+    // A node that structurally can't take typed text is disqualified from
+    // label/aria credit entirely when the step's planned action is "type" —
+    // its label text describes what clicking/checking it does, not what data
+    // it holds. Gated on `action` (not just elementType) because elementType
+    // "input" is ambiguous — it's also reported for checkbox/radio steps
+    // (action "check"/"select"), which must NOT be disqualified here.
+    const categoricalMismatch = meta.action === 'type' &&
+      meta.elementType && TEXT_ENTRY_ELEMENT_TYPES.has(meta.elementType) && isNonTextEnterable(node);
 
-    if (sim >= 1.0) {
+    // ── 1. LABEL SIMILARITY (0–50) ─────────────────────────────────────────
+    const { sim, exact } = categoricalMismatch ? { sim: 0, exact: false } : labelSimilarity(node, contentTokens);
+
+    if (exact) {
       score += WEIGHTS.labelExact;
       reasons.push(`exact/full match +${WEIGHTS.labelExact}`);
     } else if (sim >= 0.8) {
@@ -336,10 +369,12 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       const pts = Math.round(sim * WEIGHTS.labelPartialMax);
       score += pts;
       reasons.push(`partial match (${(sim * 100).toFixed(0)}%) +${pts}`);
+    } else if (categoricalMismatch) {
+      reasons.push(`not a text-enterable element for a type action +0`);
     }
 
     // ── 2. ARIA-LABEL SPECIFICITY BONUS (0–8) ──────────────────────────────
-    if (node.ariaLabel) {
+    if (node.ariaLabel && !categoricalMismatch) {
       const ariaText = _norm(node.ariaLabel);
       const ariaMatches = contentTokens.filter((t) =>
         getSynonymPhrases(t).some((p) => ariaText.includes(p))
@@ -352,31 +387,69 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     }
 
     // ── 3. TAG / TYPE SEMANTICS (0–20, –10 penalty) ────────────────────────
-    if (typeHints.size > 0) {
-      let tagMatched = false;
-      for (const typeKey of typeHints) {
-        if (TYPE_MAP[typeKey]?.(node)) {
-          score += WEIGHTS.tagMatch;
-          reasons.push(`tag matches type "${typeKey}" +${WEIGHTS.tagMatch}`);
-          tagMatched = true;
-          break;
-        }
-      }
-      if (!tagMatched) {
+    // Two independent signals can constrain the expected element type:
+    //   a) explicit type keywords parsed out of the hint text itself
+    //      ("button", "email", "checkbox", ...)
+    //   b) stepMeta.elementType, the structural type implied by the planned
+    //      action (e.g. action:"type" ⇒ elementType:"input") — this is a
+    //      real constraint even when the hint text has no type keyword in
+    //      it ("Email", "Username"), since you categorically cannot type
+    //      into a button or checkbox no matter how well its label matches.
+    // (a) is tried first; if it resolves definitively via a hard keyword,
+    // that's authoritative. Otherwise fall back to (b), which can match,
+    // mismatch (penalized), or be absent entirely (neutral).
+    let tagResolved = false;
+    for (const typeKey of typeHints) {
+      if (SOFT_TYPE_KEYWORDS.has(typeKey)) continue; // soft keywords resolved via (b) below
+      if (TYPE_MAP[typeKey]?.(node)) {
+        score += WEIGHTS.tagMatch;
+        reasons.push(`tag matches type "${typeKey}" +${WEIGHTS.tagMatch}`);
+      } else {
         score += WEIGHTS.tagPenalty;
         reasons.push(`wrong element type ${WEIGHTS.tagPenalty}`);
       }
-    } else {
-      // No type constraint from hint text — use stepMeta elementType if available.
-      // This boosts e.g. input elements when hint is "Email" and elementType is "input",
-      // even though "input" doesn't appear in the hint.
-      const metaTypeFn = meta.elementType ? TYPE_MAP[meta.elementType] : null;
-      if (metaTypeFn?.(node)) {
-        score += WEIGHTS.metaTypeBonus;
-        reasons.push(`element type from step metadata "${meta.elementType}" +${WEIGHTS.metaTypeBonus}`);
-      } else {
-        score += WEIGHTS.tagNoConstraint;
-        reasons.push(`interactive (no type constraint) +${WEIGHTS.tagNoConstraint}`);
+      tagResolved = true;
+      break;
+    }
+
+    if (!tagResolved) {
+      let softMatched = false;
+      for (const typeKey of typeHints) {
+        if (!SOFT_TYPE_KEYWORDS.has(typeKey)) continue;
+        if (TYPE_MAP[typeKey]?.(node)) {
+          const pts = Math.round(WEIGHTS.tagMatch / 2);
+          score += pts;
+          reasons.push(`tag matches type "${typeKey}" +${pts}`);
+          softMatched = true;
+          break;
+        }
+      }
+      if (!softMatched) {
+        const metaTypeFn = meta.elementType ? TYPE_MAP[meta.elementType] : null;
+        // elementType "input" is ambiguous — it's reported both for text
+        // fields (action "type") and for checkbox/radio steps (action
+        // "check"/"select", no better enum value exists for those). Only
+        // treat a checkbox/radio failing an "input" match as neutral when we
+        // don't positively know it's a text-entry step; every other
+        // elementType mismatch (e.g. a checkbox failing a "button" match) is
+        // unambiguous and still penalized.
+        const isAmbiguousCheckboxCase = meta.elementType && TEXT_ENTRY_ELEMENT_TYPES.has(meta.elementType) &&
+          (node.type === 'checkbox' || node.type === 'radio' || node.role === 'checkbox' || node.role === 'radio') &&
+          meta.action !== 'type';
+
+        if (!metaTypeFn) {
+          score += WEIGHTS.tagNoConstraint;
+          reasons.push(`interactive (no type constraint) +${WEIGHTS.tagNoConstraint}`);
+        } else if (metaTypeFn(node)) {
+          score += WEIGHTS.metaTypeBonus;
+          reasons.push(`element type from step metadata "${meta.elementType}" +${WEIGHTS.metaTypeBonus}`);
+        } else if (isAmbiguousCheckboxCase) {
+          score += WEIGHTS.tagNoConstraint;
+          reasons.push(`interactive (no type constraint) +${WEIGHTS.tagNoConstraint}`);
+        } else {
+          score += WEIGHTS.metaTypePenalty;
+          reasons.push(`element type mismatch from step metadata "${meta.elementType}" ${WEIGHTS.metaTypePenalty}`);
+        }
       }
     }
 
@@ -493,6 +566,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
           isDuplicateLabel,
           preferredZone: stepMeta.preferredZone ?? null,
           elementType:   stepMeta.elementType   ?? null,
+          action:        stepMeta.action        ?? null,
         });
         return { node, element: node.element, score, reasons };
       });

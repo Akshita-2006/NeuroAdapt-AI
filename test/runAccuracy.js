@@ -60,7 +60,7 @@ async function main() {
       }
 
       const baselineRank = rankCandidates(engine, guessedStep.targetLabel, guessedStep.alternatives, {
-        elementType: guessedStep.elementType, preferredZone: guessedStep.zone,
+        elementType: guessedStep.elementType, preferredZone: guessedStep.zone, action: guessedStep.action,
       });
       const baseline = deterministicWinner(baselineRank);
       const baselinePass = baseline.element === correctEl && baseline.score >= MIN_CONFIDENCE;
@@ -71,7 +71,7 @@ async function main() {
       }));
       const fixedStep = refined ? { ...guessedStep, ...refined } : guessedStep;
       const fixedRank = rankCandidates(engine, fixedStep.targetLabel, fixedStep.alternatives, {
-        elementType: fixedStep.elementType, preferredZone: fixedStep.zone,
+        elementType: fixedStep.elementType, preferredZone: fixedStep.zone, action: fixedStep.action,
       });
       const fixed = deterministicWinner(fixedRank);
       const fixedPass = fixed.element === correctEl && fixed.score >= MIN_CONFIDENCE;

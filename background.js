@@ -414,6 +414,7 @@ async function rankAcrossFrames(tabId, targetHint, tooltip, stepMeta = null) {
         alternatives:  stepMeta?.alternatives  ?? [],
         elementType:   stepMeta?.elementType   ?? null,
         preferredZone: stepMeta?.zone          ?? null,
+        action:        stepMeta?.action        ?? null,
       },
       { frameId: frame.frameId }
     )

@@ -151,33 +151,42 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       if (t) return t;
     }
 
-    // 6. Adjacent preceding <label> sibling (common pattern: <label>Email</label><input>)
+    // 6. Own visible text — checked BEFORE adjacent-sibling heuristics below.
+    //    Buttons/links normally carry their own label as text content (e.g.
+    //    <button>Skip for now</button>); bare <input>/<select>/<textarea>
+    //    never have textContent, so this is a no-op for them and they still
+    //    fall through to the adjacent-label rules that follow.
+    const ownText = el.innerText?.trim().replace(/\s+/g, ' ').slice(0, 80) ||
+                    el.textContent?.trim().replace(/\s+/g, ' ').slice(0, 80);
+    if (ownText) return ownText;
+
+    // 7. Adjacent preceding <label> sibling (common pattern: <label>Email</label><input>)
     const prevSib = el.previousElementSibling;
     if (prevSib?.tagName === 'LABEL') {
       const t = prevSib.textContent?.trim();
       if (t) return t;
     }
 
-    // 7. Adjacent preceding text-carrying sibling (spans, divs used as labels)
+    // 8. Adjacent preceding text-carrying sibling (spans, divs used as labels)
     if (prevSib && ['SPAN','DIV','P','STRONG','B'].includes(prevSib.tagName)) {
       const t = prevSib.textContent?.trim().slice(0, 60);
       if (t && t.length < 50) return t; // short text only — long text is prose, not a label
     }
 
-    // 8. title attribute
+    // 10. title attribute
     const title = el.getAttribute('title')?.trim();
     if (title) return title;
 
-    // 9. placeholder
+    // 11. placeholder
     const placeholder = el.getAttribute('placeholder')?.trim();
     if (placeholder) return placeholder;
 
-    // 10. alt (for image buttons)
+    // 12. alt (for image buttons)
     const alt = el.getAttribute('alt')?.trim() ||
                 el.querySelector('img')?.getAttribute('alt')?.trim();
     if (alt) return alt;
 
-    // 11. aria-describedby (less specific than labelledby, but still useful)
+    // 13. aria-describedby (less specific than labelledby, but still useful)
     const describedBy = el.getAttribute('aria-describedby');
     if (describedBy) {
       const text = describedBy
@@ -188,18 +197,11 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       if (text) return text.slice(0, 80);
     }
 
-    // 12. innerText / textContent
-    const innerText = el.innerText?.trim().replace(/\s+/g, ' ').slice(0, 80);
-    if (innerText) return innerText;
-
-    const textContent = el.textContent?.trim().replace(/\s+/g, ' ').slice(0, 80);
-    if (textContent) return textContent;
-
-    // 13. name attribute as last resort
+    // 14. name attribute as last resort
     const name = el.getAttribute('name')?.replace(/[-_]/g, ' ').trim();
     if (name) return name;
 
-    // 14. Semantic class names (absolute last resort — for icon buttons with no text)
+    // 15. Semantic class names (absolute last resort — for icon buttons with no text)
     //     Converts "hamburger-menu" → "hamburger menu", "search-icon-btn" → filtered out.
     //     Skips generic UI framework / icon library classes.
     const GENERIC_CLASS = /^(css-|_|na-|btn|button|icon|fa-|fa |svg|img|ant-|mui|mdc-|material|mat-|mdi-|v-|el-|p-icon|feather|lucide|hero|bi-|ri-|ph-)/i;
