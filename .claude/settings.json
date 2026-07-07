@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"^\\\\.env$|^config\\\\.js$\")",
+      "Bash(cd \"c:\\\\Users\\\\kamra\\\\Desktop\\\\Project\\\\NeuroAdapt-AI\" && rm -f BENCHMARK.md INVESTIGATION_REPORT.md SYSTEM_REPORT.md package-lock.json .env && ls -la)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\kamra\\Desktop\\Project\\NeuroAdapt-AI"
+    ]
+  }
+}

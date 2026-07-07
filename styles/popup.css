@@ -1,0 +1,108 @@
+/* NeuroAdapt AI — Popup Styles */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --na-blue:    #0ea5e9;
+  --na-blue-dk: #0284c7;
+  --na-bg:      #0f172a;
+  --na-surface: #1e293b;
+  --na-border:  #334155;
+  --na-text:    #f1f5f9;
+  --na-muted:   #94a3b8;
+  --na-green:   #22c55e;
+  --na-orange:  #f59e0b;
+  --na-red:     #ef4444;
+  --radius:     10px;
+  --font:       system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: var(--na-bg);
+  color: var(--na-text);
+  font-family: var(--font);
+  font-size: 14px;
+  width: 320px;
+  min-height: 200px;
+}
+
+/* ── Popup shell ─────────────────────────────────── */
+.na-popup { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+
+/* ── Header ──────────────────────────────────────── */
+.na-popup__header {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--na-border);
+  padding-bottom: 12px;
+}
+.na-popup__logo { width: 24px; height: 24px; border-radius: 6px; }
+.na-popup__title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+.na-popup__title span { color: var(--na-blue); }
+
+/* ── Status row ──────────────────────────────────── */
+.na-popup__status {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--na-surface); border-radius: var(--radius); padding: 8px 12px;
+}
+.na-popup__status-label { font-size: 12px; color: var(--na-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.na-popup__status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--na-muted); flex-shrink: 0;
+}
+.na-popup__status-dot[data-status="idle"]              { background: var(--na-muted); }
+.na-popup__status-dot[data-status="navigating"]        { background: var(--na-blue); animation: na-blink 1s ease infinite; }
+.na-popup__status-dot[data-status="waiting_for_human"] { background: var(--na-orange); animation: na-blink 0.6s ease infinite; }
+@keyframes na-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ── Goal section ────────────────────────────────── */
+.na-popup__label { display: block; font-size: 12px; color: var(--na-muted); margin-bottom: 6px; }
+.na-popup__textarea {
+  width: 100%; background: var(--na-surface); color: var(--na-text);
+  border: 1px solid var(--na-border); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 13px; font-family: inherit; resize: none;
+  transition: border-color 0.15s;
+}
+.na-popup__textarea:focus { outline: none; border-color: var(--na-blue); }
+.na-popup__hint { font-size: 11px; color: var(--na-muted); margin-top: 4px; }
+
+/* ── Fallback section ───────────────────────────── */
+.na-popup__fallback-msg { font-size: 13px; color: var(--na-orange); margin-bottom: 12px; }
+
+/* ── Buttons ─────────────────────────────────────── */
+.na-popup__btn {
+  width: 100%; padding: 10px 16px; border: none; border-radius: var(--radius);
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s, opacity 0.15s;
+}
+.na-popup__btn--primary  { background: var(--na-blue); color: #fff; margin-top: 8px; }
+.na-popup__btn--primary:hover  { background: var(--na-blue-dk); }
+.na-popup__btn--secondary { background: var(--na-surface); color: var(--na-muted); border: 1px solid var(--na-border); }
+.na-popup__btn--secondary:hover { color: var(--na-text); }
+.na-popup__btn--ghost { background: transparent; color: var(--na-muted); font-size: 12px; }
+.na-popup__btn--ghost:hover { color: var(--na-blue); }
+
+/* ── Footer ──────────────────────────────────────── */
+.na-popup__footer { border-top: 1px solid var(--na-border); padding-top: 12px; }
+
+/* ── Settings ────────────────────────────────────── */
+.na-popup__settings { border-top: 1px solid var(--na-border); padding-top: 12px; }
+.na-popup__settings-toggle {
+  font-size: 11px; color: var(--na-muted); cursor: pointer; user-select: none;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.na-popup__settings-toggle::-webkit-details-marker { display: none; }
+.na-popup__settings-toggle:hover { color: var(--na-text); }
+.na-popup__settings-body { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.na-popup__key-row { display: flex; gap: 6px; }
+.na-popup__key-input {
+  flex: 1; background: var(--na-surface); color: var(--na-text);
+  border: 1px solid var(--na-border); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; font-family: monospace;
+}
+.na-popup__key-input:focus { outline: none; border-color: var(--na-blue); }
+.na-popup__btn--save {
+  background: var(--na-surface); color: var(--na-blue);
+  border: 1px solid var(--na-blue); border-radius: 8px;
+  padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s;
+}
+.na-popup__btn--save:hover { background: rgba(14,165,233,0.1); }

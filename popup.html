@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroAdapt AI</title>
+  <link rel="stylesheet" href="styles/popup.css" />
+</head>
+<body>
+  <div class="na-popup">
+    <header class="na-popup__header">
+      <img src="icons/icon32.png" alt="NeuroAdapt AI logo" class="na-popup__logo" />
+      <h1 class="na-popup__title">NeuroAdapt <span>AI</span></h1>
+    </header>
+
+    <section class="na-popup__status" id="na-status-section">
+      <p class="na-popup__status-label" id="na-status-label">Idle</p>
+      <div class="na-popup__status-dot" id="na-status-dot" data-status="idle"></div>
+    </section>
+
+    <section class="na-popup__goal" id="na-goal-section">
+      <label for="na-goal-input" class="na-popup__label">What do you want to do?</label>
+      <textarea
+        id="na-goal-input"
+        class="na-popup__textarea"
+        placeholder="e.g. Book a train ticket to Delhi"
+        rows="3"
+        aria-describedby="na-goal-hint"
+      ></textarea>
+      <p id="na-goal-hint" class="na-popup__hint">
+        Describe your goal in plain language.
+      </p>
+      <button id="na-start-btn" class="na-popup__btn na-popup__btn--primary">
+        Start Navigation
+      </button>
+    </section>
+
+    <!-- Shown when status = waiting_for_human (Phase 5) -->
+    <section class="na-popup__fallback" id="na-fallback-section" hidden>
+      <p class="na-popup__fallback-msg" id="na-fallback-msg">
+        I need your help. Please click the element on the page.
+      </p>
+      <button id="na-cancel-btn" class="na-popup__btn na-popup__btn--secondary">
+        Cancel
+      </button>
+    </section>
+
+    <footer class="na-popup__footer">
+      <button id="na-sidepanel-btn" class="na-popup__btn na-popup__btn--ghost">
+        Open Side Panel
+      </button>
+    </footer>
+
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

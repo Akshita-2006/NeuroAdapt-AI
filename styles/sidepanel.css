@@ -1,0 +1,136 @@
+/* NeuroAdapt AI — Side Panel Styles */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --na-blue:    #0ea5e9;
+  --na-blue-dk: #0284c7;
+  --na-bg:      #0f172a;
+  --na-surface: #1e293b;
+  --na-border:  #334155;
+  --na-text:    #f1f5f9;
+  --na-muted:   #94a3b8;
+  --na-green:   #22c55e;
+  --na-orange:  #f59e0b;
+  --na-red:     #ef4444;
+  --radius:     10px;
+  --font:       system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: var(--na-bg);
+  color: var(--na-text);
+  font-family: var(--font);
+  font-size: 14px;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+/* ── Panel shell ─────────────────────────────────── */
+.na-panel { display: flex; flex-direction: column; gap: 16px; padding: 20px 16px; }
+
+/* ── Header ──────────────────────────────────────── */
+.na-panel__header {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--na-border); padding-bottom: 14px;
+}
+.na-panel__logo { width: 28px; height: 28px; border-radius: 8px; }
+.na-panel__title { font-size: 18px; font-weight: 700; flex: 1; }
+.na-panel__title span { color: var(--na-blue); }
+.na-panel__status-dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--na-muted);
+}
+.na-panel__status-dot[data-status="navigating"]        { background: var(--na-blue);   animation: na-blink 1s ease infinite; }
+.na-panel__status-dot[data-status="waiting_for_human"] { background: var(--na-orange); animation: na-blink 0.6s ease infinite; }
+@keyframes na-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ── Step card ───────────────────────────────────── */
+.na-panel__step-card {
+  background: var(--na-surface); border: 1px solid var(--na-border);
+  border-left: 3px solid var(--na-blue);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.na-panel__step-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--na-muted); margin-bottom: 4px; }
+.na-panel__step-text  { font-size: 14px; font-weight: 600; }
+
+/* ── Progress list ───────────────────────────────── */
+.na-panel__section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--na-muted); margin-bottom: 8px; }
+.na-panel__steps-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.na-panel__step {
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 13px; background: var(--na-surface); color: var(--na-muted);
+  position: relative; padding-left: 28px;
+}
+.na-panel__step::before {
+  content: '○'; position: absolute; left: 10px; color: var(--na-muted);
+}
+.na-panel__step[data-state="done"]   { color: var(--na-green);  }
+.na-panel__step[data-state="done"]::before   { content: '✓'; color: var(--na-green); }
+.na-panel__step[data-state="active"] { color: var(--na-text); border: 1px solid var(--na-blue); }
+.na-panel__step[data-state="active"]::before { content: '▶'; color: var(--na-blue); }
+
+/* ── LLM explanation bubble ──────────────────────── */
+.na-panel__bubble {
+  background: var(--na-surface); border: 1px solid var(--na-border);
+  border-radius: var(--radius); padding: 12px 14px;
+  font-size: 13px; line-height: 1.6; color: var(--na-text);
+  position: relative;
+}
+.na-panel__bubble::before {
+  content: '💬'; display: block; margin-bottom: 6px; font-size: 16px;
+}
+
+/* ── Fallback banner ─────────────────────────────── */
+.na-panel__fallback-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: rgba(245,158,11,0.12); border: 1px solid var(--na-orange);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px;
+}
+.na-panel__fallback-icon { font-size: 20px; flex-shrink: 0; }
+.na-panel__fallback-banner p { font-size: 13px; color: var(--na-orange); line-height: 1.5; }
+
+/* ── Input section ───────────────────────────────── */
+.na-panel__input-section { border-top: 1px solid var(--na-border); padding-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.na-panel__label { font-size: 12px; color: var(--na-muted); }
+.na-panel__textarea {
+  width: 100%; background: var(--na-surface); color: var(--na-text);
+  border: 1px solid var(--na-border); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 13px; font-family: inherit; resize: none;
+}
+.na-panel__textarea:focus { outline: none; border-color: var(--na-blue); }
+
+/* ── Buttons ─────────────────────────────────────── */
+.na-panel__btn {
+  padding: 10px 16px; border: none; border-radius: var(--radius);
+  font-size: 13px; font-weight: 600; cursor: pointer; width: 100%;
+  transition: background 0.15s;
+}
+.na-panel__btn--primary   { background: var(--na-blue); color: #fff; }
+.na-panel__btn--primary:hover   { background: var(--na-blue-dk); }
+.na-panel__btn--secondary { background: var(--na-surface); color: var(--na-muted); border: 1px solid var(--na-border); }
+
+/* ── Settings ────────────────────────────────────── */
+.na-panel__settings { border-top: 1px solid var(--na-border); padding-top: 12px; }
+.na-panel__settings-toggle {
+  font-size: 12px; color: var(--na-muted); cursor: pointer; user-select: none;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.na-panel__settings-toggle::-webkit-details-marker { display: none; }
+.na-panel__settings-toggle:hover { color: var(--na-text); }
+.na-panel__settings-body { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.na-panel__key-row { display: flex; gap: 6px; }
+.na-panel__key-input {
+  flex: 1; background: var(--na-surface); color: var(--na-text);
+  border: 1px solid var(--na-border); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; font-family: monospace;
+}
+.na-panel__key-input:focus { outline: none; border-color: var(--na-blue); }
+.na-panel__key-status { font-size: 11px; }
+.na-panel__hint { font-size: 11px; color: var(--na-muted); line-height: 1.4; }
+.na-panel__btn--save {
+  background: var(--na-surface); color: var(--na-blue);
+  border: 1px solid var(--na-blue); border-radius: 8px;
+  padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s;
+}
+.na-panel__btn--save:hover { background: rgba(14,165,233,0.1); }

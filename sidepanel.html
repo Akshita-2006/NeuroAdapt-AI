@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroAdapt AI — Copilot</title>
+  <link rel="stylesheet" href="styles/sidepanel.css" />
+</head>
+<body>
+  <div class="na-panel">
+    <header class="na-panel__header">
+      <img src="icons/icon32.png" alt="NeuroAdapt AI logo" class="na-panel__logo" />
+      <h1 class="na-panel__title">NeuroAdapt <span>AI</span></h1>
+      <div class="na-panel__status-dot" id="na-panel-status-dot" data-status="idle"></div>
+    </header>
+
+    <!-- Current step indicator -->
+    <section class="na-panel__step-card" id="na-step-card">
+      <p class="na-panel__step-label">Current Step</p>
+      <p class="na-panel__step-text" id="na-step-text">No active navigation.</p>
+    </section>
+
+    <!-- Progress checklist -->
+    <section class="na-panel__progress" id="na-progress-section">
+      <h2 class="na-panel__section-title">Steps</h2>
+      <ol class="na-panel__steps-list" id="na-steps-list">
+        <!-- Populated dynamically -->
+      </ol>
+    </section>
+
+    <!-- LLM explanation bubble (Phase 5) -->
+    <section class="na-panel__explanation" id="na-explanation-section" hidden>
+      <div class="na-panel__bubble" id="na-explanation-bubble"></div>
+    </section>
+
+    <!-- Human-in-the-loop fallback (Phase 5) -->
+    <section class="na-panel__fallback" id="na-panel-fallback" hidden>
+      <div class="na-panel__fallback-banner">
+        <span class="na-panel__fallback-icon" aria-hidden="true">⚠️</span>
+        <p id="na-panel-fallback-msg">I need your help. Please click the element on the page.</p>
+      </div>
+      <button id="na-panel-cancel-btn" class="na-panel__btn na-panel__btn--secondary">
+        Cancel
+      </button>
+    </section>
+
+    <!-- Goal input -->
+    <section class="na-panel__input-section">
+      <label for="na-panel-goal" class="na-panel__label">Goal</label>
+      <textarea
+        id="na-panel-goal"
+        class="na-panel__textarea"
+        placeholder="e.g. Register on UIDAI portal"
+        rows="2"
+      ></textarea>
+      <button id="na-panel-start-btn" class="na-panel__btn na-panel__btn--primary">
+        Start
+      </button>
+    </section>
+
+
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

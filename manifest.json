@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "NeuroAdapt AI",
+  "short_name": "NeuroAdapt",
+  "version": "1.0.0",
+  "description": "Accessibility assistant and web navigation copilot — deterministic DOM engine, LLM-assisted guidance.",
+
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "webNavigation",
+    "sidePanel"
+  ],
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "engine/pruner.js",
+        "engine/observer.js",
+        "engine/ranker.js",
+        "engine/highlighter.js",
+        "content.js"
+      ],
+      "css": ["styles/highlight.css"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "NeuroAdapt AI",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "32":  "icons/icon32.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+
+  "icons": {
+    "16":  "icons/icon16.png",
+    "32":  "icons/icon32.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["styles/*.css", "icons/*", "engine/*.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
