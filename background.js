@@ -27,7 +27,7 @@
  *  - Debug logging: set self.__naDebug = true in SW console to enable.
  */
 
-import { getStepExplanation, identifyElement, generateSteps, validateSelection, testApiKey } from './engine/llm.js';
+import { getStepExplanation, identifyElement, generateSteps, validateSelection, testApiKey, refineStepForPage } from './engine/llm.js';
 import { GEMINI_API_KEY } from './config.js';
 
 console.log('[NeuroAdapt] Background service worker v3 started.');
@@ -77,6 +77,13 @@ let _treeUpdateTimer = null;
 // up to MAX_AUTO_RETRIES times (covers slow SPAs still rendering when HITL fires).
 let _autoRetryCount = 0;
 const MAX_AUTO_RETRIES = 3;
+
+// Set between onBeforeNavigate and onCompleted/onErrorOccurred for the active
+// tab's main frame. Lets NA_ELEMENT_CLICKED's post-click retry stand down when
+// the click actually triggered a full navigation, instead of racing a rank
+// attempt against a frame that's mid-navigation or already torn down.
+let _navInFlight   = false;
+let _postClickTimer = null;
 
 // ── State persistence ────────────────────────────────────────────────────────
 
@@ -168,6 +175,19 @@ function transition(action, payload = {}) {
     case 'SET_EXPLANATION':
       STATE = { ...STATE, llmExplanation: payload.explanation, lastUpdated: Date.now() };
       break;
+
+    case 'REFINE_STEP': {
+      // Corrects a step's targetLabel/alternatives once the page it actually
+      // runs on has loaded — generateSteps() only guessed it sight-unseen
+      // when planning steps for pages beyond the one the goal started on.
+      const stepsMetadata = [...STATE.stepsMetadata];
+      const i = STATE.currentStepIndex;
+      if (stepsMetadata[i]) {
+        stepsMetadata[i] = { ...stepsMetadata[i], ...payload.patch };
+      }
+      STATE = { ...STATE, stepsMetadata, lastUpdated: Date.now() };
+      break;
+    }
 
     case 'CANCEL':
     case 'RESET':
@@ -326,6 +346,34 @@ async function injectContentScripts(tabId) {
   }
 }
 
+// ── Page context fetch ────────────────────────────────────────────────────────
+
+/**
+ * Fetch live page context (actual button labels, headings, inputs) from the
+ * content script, injecting it first if it isn't loaded yet. Best-effort —
+ * returns null if the tab never responds.
+ */
+async function fetchPageContext(tabId) {
+  try {
+    const ctxResp = await chrome.tabs.sendMessage(
+      tabId, { type: 'NA_GET_PAGE_CONTEXT' }, { frameId: 0 }
+    );
+    if (ctxResp?.ok) return ctxResp;
+  } catch {
+    try {
+      const injected = await injectContentScripts(tabId);
+      if (injected) {
+        await new Promise((r) => setTimeout(r, 500));
+        const ctxResp = await chrome.tabs.sendMessage(
+          tabId, { type: 'NA_GET_PAGE_CONTEXT' }, { frameId: 0 }
+        );
+        if (ctxResp?.ok) return ctxResp;
+      }
+    } catch { /* best-effort — caller falls back to URL/title only */ }
+  }
+  return null;
+}
+
 // ── Frame fan-out ─────────────────────────────────────────────────────────────
 
 /**
@@ -457,8 +505,31 @@ async function executeCurrentStep() {
   const t0   = performance.now();
 
   try {
-    const step     = stepsList[currentStepIndex];
-    const stepMeta = stepsMetadata?.[currentStepIndex] ?? null;
+    const step = stepsList[currentStepIndex];
+    let stepMeta = stepsMetadata?.[currentStepIndex] ?? null;
+
+    // Ground this step's targetLabel/alternatives against whatever page it's
+    // actually executing on — generateSteps() only guessed labels for steps
+    // beyond the first sight-unseen ("future pages" in its prompt). Refine
+    // once per step (not once per navigation): if two steps land on the same
+    // new page, each still gets its own grounding the first time it runs.
+    if (stepMeta && !stepMeta._refined) {
+      let pageUrl = '', pageTitle = '';
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        pageUrl   = tab.url   ?? '';
+        pageTitle = tab.title ?? '';
+      } catch { /* tab may not be accessible */ }
+
+      const pageContext = await fetchPageContext(tabId);
+      const refined     = pageContext
+        ? await refineStepForPage(getApiKey(), stepMeta, { pageUrl, pageTitle, pageContext })
+        : null;
+
+      transition('REFINE_STEP', { patch: { ...(refined ?? {}), _refined: true } });
+      stepMeta = STATE.stepsMetadata[currentStepIndex];
+    }
+
     console.log(`[NeuroAdapt] ── Step ${currentStepIndex + 1}/${stepsList.length}: "${step}"`);
     if (stepMeta?.alternatives?.length) {
       console.log(`[NeuroAdapt]    alternatives: ${stepMeta.alternatives.join(' | ')}`);
@@ -569,25 +640,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Fetch live page context (actual button labels, headings, inputs) from
         // the content script. This lets generateSteps produce steps with exact
         // UI labels rather than guessing from URL/title alone — major accuracy gain.
-        // If the content script isn't loaded yet, inject it first then retry.
-        let pageContext = null;
-        try {
-          const ctxResp = await chrome.tabs.sendMessage(
-            tabId, { type: 'NA_GET_PAGE_CONTEXT' }, { frameId: 0 }
-          );
-          if (ctxResp?.ok) pageContext = ctxResp;
-        } catch {
-          try {
-            const injected = await injectContentScripts(tabId);
-            if (injected) {
-              await new Promise((r) => setTimeout(r, 500));
-              const ctxResp = await chrome.tabs.sendMessage(
-                tabId, { type: 'NA_GET_PAGE_CONTEXT' }, { frameId: 0 }
-              );
-              if (ctxResp?.ok) pageContext = ctxResp;
-            }
-          } catch { /* use URL/title only — context fetch is best-effort */ }
-        }
+        const pageContext = await fetchPageContext(tabId);
         if (pageContext) {
           console.log(
             `[NeuroAdapt] Page context: ${pageContext.buttons?.length ?? 0} buttons, ` +
@@ -603,6 +656,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ?? generateStepsHeuristic(goal);
 
         const stepsMetadata = toStepObjects(rawSteps);
+        // Step 0 runs on the same page whose real content we just fetched —
+        // generateSteps() already grounded it in exact button/input labels,
+        // so it doesn't need the per-step refine pass executeCurrentStep()
+        // runs for every other (future-page, sight-unseen) step.
+        if (pageContext && stepsMetadata[0]) stepsMetadata[0]._refined = true;
         const steps         = stepsMetadata.map((s) => s.hint);
 
         console.log(`[NeuroAdapt] Goal: "${goal}"`);
@@ -673,11 +731,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (STATE.status === 'navigating') {
           console.log('[NeuroAdapt] User clicked highlighted element — advancing step.');
           clearTimeout(_treeUpdateTimer);
+          clearTimeout(_postClickTimer);
           _executing = false; // release lock if a rank was in flight
           _autoRetryCount = 0; // reset retry counter for new step
           transition('ADVANCE_STEP');
-          // Small delay to let the page respond to the click before re-ranking
-          setTimeout(() => executeCurrentStep(), 600);
+          // Small delay to let the page respond to the click before re-ranking.
+          // If the click actually triggers a full navigation, onBeforeNavigate
+          // cancels this timer and webNavigation.onCompleted drives the retry
+          // instead — otherwise this races a rank attempt against a frame
+          // that's mid-navigation or already torn down.
+          _postClickTimer = setTimeout(() => {
+            if (!_navInFlight) executeCurrentStep();
+          }, 600);
         }
         sendResponse({ ok: true });
         break;
@@ -743,10 +808,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ── Navigation listener ───────────────────────────────────────────────────────
 
+// Marks a real top-level navigation in flight for the active tab so
+// NA_ELEMENT_CLICKED's post-click timer knows to stand down (see there).
+chrome.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId }) => {
+  if (frameId !== 0)          return;
+  if (STATE.tabId !== tabId)  return;
+  _navInFlight = true;
+  clearTimeout(_postClickTimer);
+});
+
+chrome.webNavigation.onErrorOccurred.addListener(({ tabId, frameId }) => {
+  if (frameId !== 0)          return;
+  if (STATE.tabId !== tabId)  return;
+  _navInFlight = false; // navigation aborted/failed — don't leave the flag stuck
+});
+
 chrome.webNavigation.onCompleted.addListener(({ tabId, frameId }) => {
   if (frameId !== 0)                 return;
-  if (STATE.status !== 'navigating') return;
   if (STATE.tabId  !== tabId)        return;
+  _navInFlight = false;
+
+  // A completed top-level navigation is strong evidence the page changed —
+  // recover even if a premature rank attempt (racing this same navigation)
+  // already dropped us into waiting_for_human.
+  if (STATE.status === 'waiting_for_human') {
+    console.log('[NeuroAdapt] Navigation completed while waiting for human — retrying step on new page.');
+    STATE = { ...STATE, status: 'navigating', fallbackPrompt: null, lastUpdated: Date.now() };
+    broadcastState();
+    persistState();
+  }
+
+  if (STATE.status !== 'navigating') return;
 
   console.log(
     `[NeuroAdapt] Top-level navigation complete in tab ${tabId} — ` +

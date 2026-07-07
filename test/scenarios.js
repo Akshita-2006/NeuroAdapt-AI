@@ -1,0 +1,197 @@
+'use strict';
+
+/**
+ * Multi-page accuracy fixtures.
+ *
+ * Each step's `guessedStep` simulates what generateSteps() plans sight-unseen
+ * for a page it hasn't navigated to yet (its own prompt literally says "For
+ * steps on FUTURE PAGES: use your best knowledge of what that page will
+ * show"). `page` is the REAL page that step actually runs on, deliberately
+ * worded differently from the generic guess and seeded with decoy elements
+ * that share keywords with the guess, so a naive keyword match has a real
+ * chance of picking the wrong one — only grounding in the actual page
+ * content (refineStepForPage) or LLM semantic reasoning (identifyElement)
+ * should reliably land on the correct element.
+ */
+
+const LOGIN_PAGE_HTML = `
+  <header>
+    <input id="promo-email" placeholder="Subscribe with your email for offers" name="promo" />
+    <button id="promo-subscribe">Subscribe</button>
+  </header>
+  <main>
+    <h1>Client Portal Access</h1>
+    <form>
+      <label for="uid">Client ID or Registered Email</label>
+      <input type="text" id="uid" name="uid" />
+      <label for="pwd">Secret Passphrase</label>
+      <input type="password" id="pwd" name="pwd" />
+      <button type="submit" id="submit-portal">Enter Portal</button>
+      <a href="/forgot" id="forgot-link">Forgot passphrase?</a>
+    </form>
+    <button id="cta-new-account">Create New Account</button>
+  </main>
+  <footer>
+    <a href="/support" id="contact-support">Contact Support</a>
+    <a href="/about" id="about-link">About Us</a>
+  </footer>`;
+
+const SIGNUP_TYPE_HTML = `
+  <header>
+    <a href="/login" id="nav-signin">Sign in instead</a>
+  </header>
+  <main>
+    <h1>Choose your account type</h1>
+    <button id="acct-personal">I'm shopping for myself</button>
+    <button id="acct-business">I run a business</button>
+    <a href="/learn" id="learn-more">Learn more about accounts</a>
+  </main>`;
+
+const SIGNUP_PROFILE_HTML = `
+  <header>
+    <input id="site-search" placeholder="Search help articles" name="q" />
+  </header>
+  <main>
+    <h1>Create your profile</h1>
+    <label for="handle">Pick a nickname</label>
+    <input id="handle" name="handle" />
+    <label for="mail">Where should we send updates?</label>
+    <input id="mail" name="mail" type="email" />
+    <label>
+      <input type="checkbox" id="newsletter-opt" name="newsletter" />
+      Email me weekly deals
+    </label>
+    <button id="skip-profile">Skip for now</button>
+    <button id="finish-signup">Start shopping</button>
+  </main>`;
+
+const CART_HTML = `
+  <header>
+    <a href="/shop" id="continue-shopping">Continue shopping</a>
+  </header>
+  <main>
+    <h1>Your bag</h1>
+    <p>1 item</p>
+    <input id="coupon-code" placeholder="Coupon code" name="coupon" />
+    <button id="apply-coupon">Apply</button>
+    <button id="go-checkout">Take my money</button>
+  </main>`;
+
+const PAYMENT_HTML = `
+  <header>
+    <button id="paypal-instead">Use PayPal instead</button>
+  </header>
+  <main>
+    <h1>Payment</h1>
+    <label for="cc">Card digits</label>
+    <input id="cc" name="cc" />
+    <label>
+      <input type="checkbox" id="save-card" name="save-card" />
+      Save card for later
+    </label>
+    <button id="finalize-order">Ship it</button>
+  </main>`;
+
+module.exports = [
+  {
+    name: 'login-portal',
+    steps: [
+      {
+        page: { url: 'https://acme.test/portal', title: 'Client Portal Access', html: LOGIN_PAGE_HTML },
+        guessedStep: {
+          hint: 'Enter your email address',
+          targetLabel: 'Email',
+          action: 'type',
+          alternatives: ['Email address', 'Username', 'Enter email'],
+          elementType: 'input',
+          zone: 'main',
+        },
+        correctSelector: '#uid',
+      },
+      {
+        page: { url: 'https://acme.test/portal', title: 'Client Portal Access', html: LOGIN_PAGE_HTML },
+        guessedStep: {
+          hint: 'Click the Sign in button',
+          targetLabel: 'Sign in',
+          action: 'click',
+          alternatives: ['Log in', 'Login', 'Sign In'],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#submit-portal',
+      },
+    ],
+  },
+
+  {
+    name: 'signup-account-type',
+    steps: [
+      {
+        page: { url: 'https://shoply.test/join/type', title: 'Choose your account type', html: SIGNUP_TYPE_HTML },
+        guessedStep: {
+          hint: 'Select a personal account',
+          targetLabel: 'Personal',
+          action: 'click',
+          alternatives: ['Personal account', 'Individual', 'For myself'],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#acct-personal',
+      },
+      {
+        page: { url: 'https://shoply.test/join/profile', title: 'Create your profile', html: SIGNUP_PROFILE_HTML },
+        guessedStep: {
+          hint: 'Enter your email address',
+          targetLabel: 'Email address',
+          action: 'type',
+          alternatives: ['Email', 'Your email', 'Username'],
+          elementType: 'input',
+          zone: 'main',
+        },
+        correctSelector: '#mail',
+      },
+      {
+        page: { url: 'https://shoply.test/join/profile', title: 'Create your profile', html: SIGNUP_PROFILE_HTML },
+        guessedStep: {
+          hint: 'Submit registration button',
+          targetLabel: 'Submit',
+          action: 'click',
+          alternatives: ['Create account', 'Register', 'Sign up'],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#finish-signup',
+      },
+    ],
+  },
+
+  {
+    name: 'checkout-unusual-wording',
+    steps: [
+      {
+        page: { url: 'https://gearup.test/cart', title: 'Your bag', html: CART_HTML },
+        guessedStep: {
+          hint: 'Click the checkout button',
+          targetLabel: 'Checkout',
+          action: 'click',
+          alternatives: ['Buy now', 'Proceed to checkout', 'Place order'],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#go-checkout',
+      },
+      {
+        page: { url: 'https://gearup.test/pay', title: 'Payment', html: PAYMENT_HTML },
+        guessedStep: {
+          hint: 'Place order button',
+          targetLabel: 'Place order',
+          action: 'click',
+          alternatives: ['Confirm payment', 'Pay now', 'Complete purchase'],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#finalize-order',
+      },
+    ],
+  },
+];

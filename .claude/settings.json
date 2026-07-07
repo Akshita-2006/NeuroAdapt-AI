@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(grep -E \"^\\\\.env$|^config\\\\.js$\")",
-      "Bash(cd \"c:\\\\Users\\\\kamra\\\\Desktop\\\\Project\\\\NeuroAdapt-AI\" && rm -f BENCHMARK.md INVESTIGATION_REPORT.md SYSTEM_REPORT.md package-lock.json .env && ls -la)"
+      "Bash(cd \"c:\\\\Users\\\\kamra\\\\Desktop\\\\Project\\\\NeuroAdapt-AI\" && rm -f BENCHMARK.md INVESTIGATION_REPORT.md SYSTEM_REPORT.md package-lock.json .env && ls -la)",
+      "Bash(powershell.exe -NoProfile -Command 'Get-ChildItem -Path '\\\\''C:$Recycle.Bin'\\\\'' -Recurse -Force -ErrorAction SilentlyContinue -Include '\\\\''BENCHMARK*'\\\\'','\\\\''SYSTEM_REPORT*'\\\\'','\\\\''INVESTIGATION*'\\\\'' | Select-Object FullName')",
+      "Bash(npm view *)",
+      "Bash(node -e \"import\\('./config.js'\\).then\\(m => console.log\\('OK', typeof m.GEMINI_API_KEY\\)\\).catch\\(e => console.error\\('FAIL', e.message\\)\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\kamra\\Desktop\\Project\\NeuroAdapt-AI"

@@ -395,6 +395,86 @@ Return ONLY a JSON array, no markdown. Example for a 2-step flow:
   }
 }
 
+// ── refineStepForPage ────────────────────────────────────────────────────────
+
+/**
+ * generateSteps() has to guess targetLabel/alternatives for steps that run on
+ * pages the user hasn't navigated to yet ("future pages" — see its prompt).
+ * Once that navigation actually completes, the real page content is
+ * available. This re-grounds a single step's targetLabel/alternatives
+ * against what's actually on the page, correcting guesses that don't match
+ * reality — the main accuracy gap for goals that span multiple pages.
+ *
+ * @param {string} apiKey
+ * @param {{hint:string, targetLabel:string, alternatives:string[], elementType:string|null, zone:string|null}} step
+ * @param {object} [ctx]
+ * @param {string} [ctx.pageUrl]
+ * @param {string} [ctx.pageTitle]
+ * @param {object} [ctx.pageContext]
+ * @returns {Promise<object|null>} refined {targetLabel, alternatives, elementType, zone}, or null if no confident match / unavailable
+ */
+export async function refineStepForPage(apiKey, step, { pageUrl = '', pageTitle = '', pageContext = null } = {}) {
+  if (!apiKey?.trim() || !step?.hint || !pageContext) return null;
+
+  const contextParts = [];
+  if (pageUrl)   contextParts.push(`Page URL: ${pageUrl}`);
+  if (pageTitle) contextParts.push(`Page title: "${pageTitle}"`);
+  if (pageContext.headings?.length) contextParts.push(`Page headings: ${pageContext.headings.join(' | ')}`);
+  if (pageContext.buttons?.length)  contextParts.push(`Visible buttons/links: ${pageContext.buttons.join(' | ')}`);
+  if (pageContext.inputs?.length)   contextParts.push(`Visible input fields: ${pageContext.inputs.join(' | ')}`);
+  if (pageContext.tabs?.length)     contextParts.push(`Visible tabs/menu items: ${pageContext.tabs.join(' | ')}`);
+  const contextBlock = contextParts.join('\n');
+  if (!contextBlock) return null;
+
+  const prompt =
+`You are correcting a pre-planned navigation step now that the actual page it targets has loaded.
+
+${contextBlock}
+
+Planned step (targetLabel was GUESSED before this page was ever seen):
+- Instruction: "${step.hint}"
+- Guessed target label: "${step.targetLabel}"
+- Guessed alternatives: ${step.alternatives?.length ? step.alternatives.join(' | ') : '(none)'}
+- Element type: ${step.elementType ?? 'unknown'}
+
+Look at the REAL buttons/inputs/headings above. If one of them clearly matches this step's
+intent, return its EXACT visible text as targetLabel — even if it differs from the guess.
+If nothing on this page matches the step's intent, set "match" to false.
+
+Return ONLY a JSON object, no markdown:
+{"match":true,"targetLabel":"exact visible text","alternatives":["...","..."],"elementType":"button","zone":"main"}
+or
+{"match":false}`;
+
+  dbg('REFINE_STEP_PROMPT', { hint: step.hint, guessed: step.targetLabel, pageUrl });
+
+  try {
+    const raw    = await geminiPost(apiKey, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: 300,
+        temperature: 0,
+        thinkingConfig: { thinkingBudget: 512 },
+      },
+    });
+    const result = findJson(raw, 'match');
+    if (!result?.match || !result.targetLabel?.trim()) return null;
+
+    console.log(`[NeuroAdapt] Refined step for new page: "${step.targetLabel}" → "${result.targetLabel}"`);
+    dbg('REFINE_STEP_RESULT', result);
+    return {
+      targetLabel:  result.targetLabel.trim(),
+      alternatives: Array.isArray(result.alternatives) ? result.alternatives : step.alternatives,
+      elementType:  result.elementType ?? step.elementType,
+      zone:         result.zone ?? step.zone,
+    };
+  } catch (err) {
+    if (err.name === 'AbortError') console.warn('[NeuroAdapt] refineStepForPage timed out.');
+    else console.warn('[NeuroAdapt] refineStepForPage failed:', err.message);
+    return null;
+  }
+}
+
 // ── validateSelection ────────────────────────────────────────────────────────
 
 /**
