@@ -1,119 +1,108 @@
 # NeuroAdapt AI
 
-NeuroAdapt AI is a Chrome extension that acts like an AI accessibility copilot for the web. It analyzes the current page, detects accessibility and usability barriers, recommends a user persona, applies reversible page adaptations, and explains what changed through a floating assistant.
+NeuroAdapt AI is a Chrome extension (Manifest V3) that acts as an AI web-navigation copilot. You describe a goal in plain language ("Book a train ticket to Delhi"); the extension breaks it into steps, finds the right element on the page using a two-stage deterministic + LLM pipeline, highlights it non-intrusively, and walks you through each step to completion.
 
-The app supports local heuristic analysis and real Gemini-powered reasoning when you add your Google Gemini API key in the extension popup.
+## How it works
+
+```
+User Goal → generateSteps (Gemini) → State Machine → DOM Pruner → Ranker (top candidates) → identifyElement (Gemini) → Highlighter → getStepExplanation (Gemini)
+```
+
+- **Deterministic first pass**: the DOM is pruned to actionable elements (buttons, inputs, links, ARIA roles, contenteditable, etc.) and scored against the step's target hint using label/synonym matching, context, and viewport signals.
+- **LLM disambiguation**: Gemini picks the best candidate from the top-ranked elements, with page URL/title and per-candidate metadata as context.
+- **Known workflows skip the LLM entirely**: common tasks (Aadhaar, PAN, banking, shopping, login, etc.) run from a pre-defined step registry, so there's no step-generation call and no hallucination risk.
+- **Human-in-the-loop fallback**: if confidence is too low, the extension asks you to click the element manually and resumes automatically.
+- **Reversible highlighting**: a soft glow ring and step badge are used instead of intrusive overlays, and are always cleared before the next highlight.
 
 ## Features
 
-- **AI page analysis**: uses a structured DOM summary instead of sending full raw HTML.
-- **Gemini integration**: routes AI requests through the Manifest V3 background service worker.
-- **Persona modes**: Elderly User, Visually Impaired User, First-Time Internet User, Patient, and Auto Detect.
-- **First-Time User guidance**: highlights likely next actions, adds numbered step badges, guides form fields, and reduces distracting side content.
-- **Reversible adaptation**: Reset restores the original page styling.
-- **Floating assistant**: shows page findings, accessibility score, issues, recommendations, and guidance.
-- **Before/After comparison**: switch between original and adapted page states.
-- **Speech summary**: reads out the current page challenges or guidance.
-- **Gemini test button**: verifies that your saved API key works before using it on a real page.
-
-## Tech Stack
-
-- React 18
-- TypeScript
-- Vite
-- Tailwind CSS
-- Chrome Extension Manifest V3
-- Google Gemini API
+- Goal-based page navigation via the popup or side panel
+- Pre-built workflow library for common government/finance/shopping tasks (no LLM call needed)
+- Gemini-powered step generation and element identification for everything else
+- Cross-frame (iframe) support with main-frame preference
+- Step verification (detects errors before advancing) and automatic recovery/re-rank on low confidence
+- Session history and an internal accuracy dashboard for development use
 
 ## Project Structure
 
 ```text
 neuroadapt-ai/
+  manifest.json              # MV3 manifest
+  background.js              # Service worker — state machine, message bus, Gemini calls
+  content.js                 # Content script orchestrator (runs in every frame)
+  config.js                  # Gemini API key, generated from .env (gitignored, never committed)
+  config.example.js          # Template for config.js
+  scripts/generate-config.js # Reads .env, writes config.js
+  popup.html / popup.js      # Extension popup UI
+  sidepanel.html / sidepanel.js  # Copilot side panel UI
+  debug-panel.html / debug-panel.js  # Developer-only accuracy/session dashboard
+  engine/
+    pruner.js                # DOM pruner — finds actionable elements
+    observer.js               # MutationObserver wrapper (debounced re-prune)
+    ranker.js                 # Deterministic candidate ranker
+    highlighter.js             # Element highlight ring + step badge
+    llm.js                    # Gemini API abstraction
+  workflows/
+    registry.js               # Pre-defined step sequences for known tasks
+  styles/
+    highlight.css             # Injected page styles for highlighting
+    popup.css
+    sidepanel.css
+  icons/
   public/
-    logo.svg
-  src/
-    background/
-      index.ts              # MV3 service worker and Gemini routing
-    content/
-      ContentApp.tsx        # Floating assistant and page actions
-      contentStyles.ts      # Shadow DOM overlay styles
-      index.tsx             # Content script mount
-    popup/
-      PopupApp.tsx          # Extension popup controls
-      main.tsx
-    shared/
-      adaptation.ts         # Reversible DOM transformations
-      aiSchema.ts           # Gemini JSON parsing and validation
-      chrome.ts             # Chrome API helpers
-      gemini.ts             # Gemini request client and prompts
-      heuristics.ts         # Local interaction heuristics
-      messaging.ts          # Typed extension messages
-      pageInsights.ts       # Local page metrics
-      pageSummary.ts        # Structured DOM extraction
-      storage.ts            # Chrome/local storage helpers
-      types.ts              # Shared app types
-  manifest.json             # Extension manifest
-  popup.html
-  vite.config.ts
-  vite.content.config.ts
 ```
 
 ## Prerequisites
 
-- Node.js installed
-- Google Chrome installed
-- A Google Gemini API key if you want real AI reasoning
+- Google Chrome
+- A Gemini API key (used for step generation, element disambiguation, and step explanations when a task isn't a known workflow)
 
-You can still run the extension without a Gemini key. In that case, NeuroAdapt falls back to local heuristic analysis.
+## Setup
 
-## Install Dependencies
+This extension has no bundler — it runs directly from source. The only build step is generating `config.js` (gitignored) from your local `.env`.
 
-Open PowerShell in the project folder:
+1. Create a `.env` file at the project root:
+   ```
+   GEMINI_API_KEY=your-gemini-api-key
+   ```
+2. Run `npm run generate-config` to produce `config.js` from it.
+3. Open Chrome and go to `chrome://extensions`.
+4. Turn on **Developer mode** (top-right).
+5. Click **Load unpacked** and select the `neuroadapt-ai` folder.
+6. Pin **NeuroAdapt AI** from the extensions toolbar.
 
-```powershell
-cd neuroadapt-ai
-npm.cmd install
+Re-run `npm run generate-config` any time you change the key in `.env`, then reload the extension.
+
+## Using It
+
+1. Click the **NeuroAdapt AI** icon (or open the side panel).
+2. Describe your goal in plain language.
+3. Click **Start Navigation** — the extension highlights the next element to interact with and advances automatically as you complete each step.
+4. If it isn't confident about an element, it asks you to click the target manually and continues from there.
+
+## Debugging
+
+Enable verbose logging from any page's DevTools console:
+
+```js
+window.NA_DEBUG = true
 ```
 
-Use `npm.cmd` on Windows because PowerShell may block the `npm.ps1` shim depending on your execution policy.
+From the background service worker console (`chrome://extensions` → Inspect service worker):
 
-## Build The Extension
-
-```powershell
-npm.cmd run build
+```js
+self.__naDebug = true
 ```
 
-This creates the production extension files in:
+The developer debug panel (session history, per-step timings, LLM traces) is reachable via `Alt+Shift+D` in the popup and is not exposed to normal users.
 
-```text
-neuroadapt-ai\dist
-```
+## Permissions
 
-## Load The Extension In Chrome
-
-1. Open Chrome.
-2. Go to `chrome://extensions`.
-3. Turn on **Developer mode** in the top-right.
-4. Click **Load unpacked**.
-5. Select this folder:
-
-```text
-dist
-```
-
-6. NeuroAdapt AI should appear in the extension list.
-7. Click the puzzle-piece icon in Chrome and pin **NeuroAdapt AI**.
-
-## Add Your Gemini API Key
-
-1. Click the pinned **NeuroAdapt AI** extension icon.
-2. Find the **Gemini API Key** section.
-3. Paste your Gemini API key into the **API key** field.
-4. Keep the default model or change it if needed.
-5. Click **Save key**.
-6. Click **Test**.
-
-If Gemini is working, you should see a success message like:
-
-```text
-Gemini working. Persona: First-Time Internet User, sc
+| Permission | Reason |
+|---|---|
+| `activeTab` | Read the current tab and send messages |
+| `scripting` | Inject content scripts |
+| `storage` | Persist state and session history |
+| `webNavigation` | Enumerate frames for cross-iframe ranking |
+| `sidePanel` | Open and control the side panel |
+| `host_permissions: <all_urls>` | Operate on any page the user navigates to |
