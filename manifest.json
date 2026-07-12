@@ -10,7 +10,8 @@
     "scripting",
     "storage",
     "webNavigation",
-    "sidePanel"
+    "sidePanel",
+    "offscreen"
   ],
   "host_permissions": ["<all_urls>"],
 
@@ -27,6 +28,7 @@
         "engine/observer.js",
         "engine/ranker.js",
         "engine/highlighter.js",
+        "engine/pageContext.js",
         "content.js"
       ],
       "css": ["styles/highlight.css"],

@@ -260,7 +260,14 @@ If genuinely nothing matches: {"ref":null,"confidence":0,"reason":"brief"}`;
     const raw = await geminiPost(apiKey, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: 200,
+        // maxOutputTokens must cover thinkingBudget PLUS the actual answer —
+        // thinking tokens are drawn from the same budget, not a separate one.
+        // With thinkingBudget:1024 and this left at 200, the model reliably
+        // burns the whole budget on internal reasoning and hits MAX_TOKENS
+        // before emitting a single answer token, so every call silently
+        // returned null. Confirmed via finishReason:"MAX_TOKENS" with
+        // thoughtsTokenCount near the old cap and 0 candidate tokens.
+        maxOutputTokens: 1536,
         temperature: 0,
         thinkingConfig: { thinkingBudget: 1024 },
       },
@@ -330,7 +337,16 @@ User goal: "${goal}"
 CRITICAL RULES:
 - For steps on the CURRENT PAGE: use EXACT text from "Visible buttons/links on page" and "Visible input fields" above
 - If you see "Sign in" in the buttons list, use "Sign in" as targetLabel — NEVER "Login" or "Log In"
-- For steps on FUTURE PAGES (after navigation): use your best knowledge of what that page will show
+- For steps on FUTURE PAGES/PANELS (after navigation, or after opening a menu
+  you can't see inside yet): you are GUESSING, not reporting fact. Prefer the
+  most common, widely-recognized term for that action across apps rather than
+  a specific invented phrase, give MORE alternatives than usual (4, not 2) to
+  maximize the chance one matches whatever the real element is actually
+  labeled, and phrase "hint" around the user's INTENT ("Start a new group")
+  rather than asserting a specific UI string as if you'd already seen it
+  ("Click the 'Create Group' button") — you haven't. This guess gets checked
+  against the real page before it's ever shown as a confirmed step; a
+  narrower, overconfident guess only makes that check more likely to fail.
 - Each step references ONE specific UI element — its targetLabel is the visible text/placeholder
 - "hint" = human-readable instruction for the user
 - "targetLabel" = the EXACT label the element shows (button text, input placeholder, link text)
@@ -365,7 +381,9 @@ Return ONLY a JSON array, no markdown. Example for a 2-step flow:
     const raw   = await geminiPost(apiKey, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: 1200,
+        // thinkingBudget draws from maxOutputTokens, not a separate pool —
+        // leave generous headroom above it for a full 7-step JSON array.
+        maxOutputTokens: 2048,
         temperature: 0,
         thinkingConfig: { thinkingBudget: 1024 },
       },
@@ -452,7 +470,8 @@ or
     const raw    = await geminiPost(apiKey, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: 300,
+        // thinkingBudget draws from maxOutputTokens, not a separate pool.
+        maxOutputTokens: 900,
         temperature: 0,
         thinkingConfig: { thinkingBudget: 512 },
       },
@@ -536,7 +555,8 @@ or if a better match exists:
     const raw    = await geminiPost(apiKey, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: 200,
+        // thinkingBudget draws from maxOutputTokens, not a separate pool.
+        maxOutputTokens: 800,
         temperature: 0,
         thinkingConfig: { thinkingBudget: 512 },
       },

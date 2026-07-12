@@ -57,6 +57,19 @@ function initNeuroAdapt() {
   const observer = new E.Observer((_mutations) => {
     tree = pruner.prune();
     console.log('[NeuroAdapt] Tree refreshed after DOM mutation:', tree.length, 'elements');
+
+    // Only ask background to re-evaluate the step if the current target
+    // isn't already stably found. Continuously-mutating SPAs (WhatsApp Web's
+    // chat list, presence indicators, timestamps, etc.) never stop firing
+    // mutations — without this check, every one of those unrelated mutations
+    // would trigger a full re-rank and could highlight a different candidate
+    // each time, visibly flip-flopping between decisions even after the
+    // right element was already found and is just awaiting the user's click.
+    if (highlighter.isStable()) {
+      dbg('TREE_UPDATE_SUPPRESSED', 'Target already stable — skipping re-rank request.');
+      return;
+    }
+
     try {
       chrome.runtime.sendMessage({ type: 'NA_TREE_UPDATED', frame: window.location.href })
         .catch(() => {});
@@ -277,6 +290,10 @@ function initNeuroAdapt() {
           });
 
           const confident = winScore >= minScore;
+          // Populated below when the winner is a link with a resolvable
+          // http(s) destination — lets background.js prefetch that page's
+          // context ahead of navigation (see maybePrefetchNextStep()).
+          let topHref = null;
 
           if (confident) {
             // ── Stale ref fix ─────────────────────────────────────────────
@@ -306,6 +323,15 @@ function initNeuroAdapt() {
             }
 
             if (winNode?.element && document.contains(winNode.element)) {
+              // Surface a resolvable link destination so background.js can
+              // prefetch the next step's page before the user even clicks.
+              if (winNode.tag === 'a' && winNode.element.href) {
+                try {
+                  const u = new URL(winNode.element.href, window.location.href);
+                  if (u.protocol === 'http:' || u.protocol === 'https:') topHref = u.href;
+                } catch { /* unparseable href — no prefetch */ }
+              }
+
               // Use observer.pauseAround so the badge insertion doesn't
               // trigger a spurious re-rank (belt-and-suspenders alongside the
               // observer's own na-id filter).
@@ -343,6 +369,7 @@ function initNeuroAdapt() {
             topRef:   winRef,
             topScore: winScore,
             topLabel: winLabel,
+            topHref,
             confident,
             source:   winSource,
             ranked:   candidates.slice(0, 5).map(({ node: n, score: s, reasons: r }) =>
@@ -357,114 +384,17 @@ function initNeuroAdapt() {
       // ── Page context snapshot (for generateSteps) ───────────────────────
       // Returns actual UI element labels from the live page so the LLM can
       // generate steps that reference exact button text / input placeholders
-      // instead of guessing from the URL alone.
+      // instead of guessing from the URL alone. Extraction logic lives in
+      // engine/pageContext.js, shared with the offscreen prefetch parser so
+      // a link-lookahead preview and the real post-navigation page agree.
       case 'NA_GET_PAGE_CONTEXT': {
-        const uniq = (arr) => [...new Set(arr.filter(Boolean))];
-
-        const headings = uniq(
-          [...document.querySelectorAll('h1,h2,h3,[role="heading"]')]
-            .map((el) => el.innerText?.trim().slice(0, 60))
-        ).slice(0, 8);
-
-        const buttons = uniq(
-          [...document.querySelectorAll(
-            'button,[role="button"],input[type="submit"],input[type="button"],a[role="button"]'
-          )]
-            .filter((el) => {
-              try {
-                const s = window.getComputedStyle(el);
-                return s.display !== 'none' && s.visibility !== 'hidden';
-              } catch { return true; }
-            })
-            .map((el) =>
-              (el.innerText || el.value || el.getAttribute('aria-label') || '')
-                .trim().replace(/\s+/g, ' ').slice(0, 50)
-            )
-            .filter((t) => t.length > 0 && t.length < 50)
-        ).slice(0, 25);
-
-        const links = uniq(
-          [...document.querySelectorAll('a[href]')]
-            .filter((el) => {
-              try {
-                const s = window.getComputedStyle(el);
-                return s.display !== 'none' && (el.innerText?.trim().length > 0);
-              } catch { return true; }
-            })
-            .map((el) => el.innerText.trim().replace(/\s+/g, ' ').slice(0, 50))
-            .filter((t) => t.length > 1 && t.length < 50)
-        ).slice(0, 20);
-
-        const inputs = uniq(
-          [...document.querySelectorAll(
-            'input:not([type="hidden"]),textarea,select,[contenteditable="true"]'
-          )]
-            .filter((el) => {
-              try {
-                const s = window.getComputedStyle(el);
-                return s.display !== 'none' && s.visibility !== 'hidden';
-              } catch { return true; }
-            })
-            .map((el) => {
-              // 1. aria-label (most explicit)
-              const aria = el.getAttribute('aria-label')?.trim();
-              if (aria) return aria;
-              // 2. placeholder or data-placeholder (Draft.js / Quill contenteditable)
-              const ph = el.getAttribute('placeholder')?.trim()
-                      || el.getAttribute('data-placeholder')?.trim();
-              if (ph) return ph;
-              // 3. associated <label for="id"> — most common pattern on form-heavy sites
-              if (el.id) {
-                try {
-                  const assoc = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-                  const t = assoc?.textContent?.trim().replace(/\s+/g, ' ');
-                  if (t && t.length < 60) return t;
-                } catch (_) { /* CSS.escape not available */ }
-              }
-              // 4. wrapping <label>
-              const wrap = el.closest('label');
-              if (wrap) {
-                const clone = wrap.cloneNode(true);
-                clone.querySelectorAll('input,select,textarea').forEach((n) => n.remove());
-                const t = clone.textContent?.trim().replace(/\s+/g, ' ');
-                if (t && t.length < 60) return t;
-              }
-              // 5. adjacent preceding <label> sibling
-              const prev = el.previousElementSibling;
-              if (prev?.tagName === 'LABEL') {
-                const t = prev.textContent?.trim();
-                if (t && t.length < 60) return t;
-              }
-              // 6. name attribute
-              return el.getAttribute('name')?.replace(/[-_]/g, ' ').trim() || '';
-            })
-            .filter(Boolean)
-        ).slice(0, 15);
-
-        // Tab labels — important for SPA tab-navigation (account tabs, dashboard tabs, etc.)
-        const tabs = uniq(
-          [...document.querySelectorAll('[role="tab"],[role="menuitem"]')]
-            .filter((el) => {
-              try {
-                const s = window.getComputedStyle(el);
-                return s.display !== 'none' && s.visibility !== 'hidden';
-              } catch { return true; }
-            })
-            .map((el) => (el.innerText || el.getAttribute('aria-label') || '')
-              .trim().replace(/\s+/g, ' ').slice(0, 50))
-            .filter((t) => t.length > 0 && t.length < 50)
-        ).slice(0, 10);
-
+        const ctx = E.extractPageContext(document);
         sendResponse({
           ok: true,
           frame: window.location.href,
           pageUrl: window.location.href,
           pageTitle: document.title,
-          headings,
-          buttons,
-          links,
-          inputs,
-          tabs,
+          ...ctx,
         });
         break;
       }
@@ -504,6 +434,17 @@ function attachClickCapture(sendResponse) {
   document.body.classList.add('na-hitl-cursor');
   console.log('[NeuroAdapt] HITL: waiting for user click…');
 
+  // Acknowledge that capture is armed right away — the actual click may not
+  // happen for a long time (that's the point of HITL), and holding this
+  // response open that long is fragile: if the background service worker
+  // that issued NA_CAPTURE_CLICK gets evicted for being idle while waiting
+  // (likely for anything longer than a few seconds), its in-flight callback
+  // is gone and the eventual click would vanish silently. The click itself
+  // is reported separately below via its own NA_HITL_CLICKED message, picked
+  // up by background.js's persistent listener — that one survives service
+  // worker restarts because it isn't tied to any single execution's promise.
+  sendResponse({ ok: true });
+
   function onCapture(evt) {
     evt.preventDefault();
     evt.stopPropagation();
@@ -513,7 +454,7 @@ function attachClickCapture(sendResponse) {
     const el     = evt.target;
     const rect   = el.getBoundingClientRect();
     const result = {
-      ok:        true,
+      type:      'NA_HITL_CLICKED',
       frame:     window.location.href,
       tag:       el.tagName.toLowerCase(),
       id:        el.id || null,
@@ -529,7 +470,9 @@ function attachClickCapture(sendResponse) {
     };
 
     console.log('[NeuroAdapt] HITL: user clicked', result.tag, result.text ?? result.id ?? '');
-    sendResponse(result);
+    try {
+      chrome.runtime.sendMessage(result).catch(() => {});
+    } catch (_) { /* extension context invalidated */ }
   }
 
   document.addEventListener('click', onCapture, { once: true, capture: true });

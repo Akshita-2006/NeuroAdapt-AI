@@ -182,6 +182,15 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
            n.role === 'checkbox' || n.role === 'radio';
   }
 
+  // Structural element types that have a single, unambiguous DOM equivalent:
+  // a "checkbox" step means an actual checkbox, never a text field, no matter
+  // how well the text field's own label happens to echo the hint. A plain
+  // <input> captioned exactly "Email notifications" is not a substitute for
+  // the real notifications checkbox elsewhere on the page. Unlike TEXT_ENTRY
+  // types (only meaningful for the "type" action), this check is action-
+  // independent — nothing you do to a text field makes it a checkbox.
+  const STRUCTURAL_ELEMENT_TYPES = new Set(['checkbox', 'radio', 'select', 'dropdown']);
+
   const PURE_TYPE_DESCRIPTORS = new Set([
     'button','link','anchor','input','field','textbox','dropdown',
     'select','checkbox','radio','textarea','tab','menu','form',
@@ -347,14 +356,20 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
 
     if (!contentTokens.length) return { score: 0, reasons: ['empty hint'] };
 
-    // A node that structurally can't take typed text is disqualified from
-    // label/aria credit entirely when the step's planned action is "type" —
-    // its label text describes what clicking/checking it does, not what data
-    // it holds. Gated on `action` (not just elementType) because elementType
-    // "input" is ambiguous — it's also reported for checkbox/radio steps
-    // (action "check"/"select"), which must NOT be disqualified here.
-    const categoricalMismatch = meta.action === 'type' &&
-      meta.elementType && TEXT_ENTRY_ELEMENT_TYPES.has(meta.elementType) && isNonTextEnterable(node);
+    // A node that is structurally incompatible with the step's planned target
+    // is disqualified from label/aria credit entirely — its label text may
+    // echo the hint, but that doesn't change what the element actually is.
+    // Two cases: (a) action is "type" but the node can't take typed text
+    // (gated on `action`, not just elementType, because elementType "input"
+    // is ambiguous — it's also reported for checkbox/radio steps whose action
+    // is "check"/"select", which must NOT be disqualified here); (b) the step
+    // wants a structurally unambiguous control (checkbox/radio/select) and
+    // this node just isn't one, regardless of action.
+    const categoricalMismatch =
+      (meta.action === 'type' &&
+        meta.elementType && TEXT_ENTRY_ELEMENT_TYPES.has(meta.elementType) && isNonTextEnterable(node)) ||
+      (meta.elementType && STRUCTURAL_ELEMENT_TYPES.has(meta.elementType) &&
+        TYPE_MAP[meta.elementType] && !TYPE_MAP[meta.elementType](node));
 
     // ── 1. LABEL SIMILARITY (0–50) ─────────────────────────────────────────
     const { sim, exact } = categoricalMismatch ? { sim: 0, exact: false } : labelSimilarity(node, contentTokens);
@@ -370,7 +385,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       score += pts;
       reasons.push(`partial match (${(sim * 100).toFixed(0)}%) +${pts}`);
     } else if (categoricalMismatch) {
-      reasons.push(`not a text-enterable element for a type action +0`);
+      reasons.push(`structurally incompatible with step target +0`);
     }
 
     // ── 2. ARIA-LABEL SPECIFICITY BONUS (0–8) ──────────────────────────────

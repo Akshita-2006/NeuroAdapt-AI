@@ -81,6 +81,25 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       document.getElementById(BADGE_ID)?.remove();
     }
 
+    /**
+     * True when there's no point re-ranking right now: something is already
+     * highlighted AND it's still actually in the DOM. False when there's
+     * nothing highlighted yet, or the highlighted element just got removed
+     * (e.g. an SPA re-render swapped it out) — both cases where re-evaluating
+     * is actually useful.
+     *
+     * Exists so content.js can ignore DOM mutations that have nothing to do
+     * with the already-found target — continuously-updating SPAs (chat
+     * lists, live counters, presence indicators) mutate constantly, and
+     * without this check every one of those unrelated mutations would
+     * trigger a full re-rank that could land on a different candidate each
+     * time, visibly flickering between choices even after the right element
+     * was already found and is just waiting for the user to click it.
+     */
+    isStable() {
+      return !!this._current && document.contains(this._current);
+    }
+
     // ── Private ───────────────────────────────────────────────────────────────
 
     _showBadge(element, label) {

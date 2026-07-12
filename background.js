@@ -105,6 +105,20 @@ async function restoreState() {
   } catch { /* first run */ }
 }
 
+// MV3 service workers are ephemeral — Chrome kills this one after ~30s idle
+// and spins up a fresh instance (with STATE back at DEFAULT_STATE) the next
+// time an event needs delivering. A real multi-page goal routinely leaves
+// enough idle time between steps for that to happen, and the event most
+// likely to wake a dead worker is exactly webNavigation.onCompleted — the
+// signal that a step should re-run on the page it just navigated to. Every
+// listener below that reads STATE (tabId, status, currentStepIndex, …) must
+// await this before touching it, or it risks reading the stale in-memory
+// default instead of what was actually persisted: STATE.tabId would still be
+// null, the `STATE.tabId !== tabId` guards would all bail, and the
+// "navigation finished, re-run the step" signal would be silently dropped —
+// the goal just hangs on that step forever with no further sign of life.
+const _stateReady = restoreState();
+
 // ── State machine ─────────────────────────────────────────────────────────────
 
 function transition(action, payload = {}) {
@@ -180,8 +194,12 @@ function transition(action, payload = {}) {
       // Corrects a step's targetLabel/alternatives once the page it actually
       // runs on has loaded — generateSteps() only guessed it sight-unseen
       // when planning steps for pages beyond the one the goal started on.
+      // stepIndex defaults to the current step (the reactive, post-navigation
+      // refine in executeCurrentStep()) but can target a future step directly
+      // (the link-lookahead prefetch in maybePrefetchNextStep(), which refines
+      // step N+1 while the user is still on step N's page).
       const stepsMetadata = [...STATE.stepsMetadata];
-      const i = STATE.currentStepIndex;
+      const i = payload.stepIndex ?? STATE.currentStepIndex;
       if (stepsMetadata[i]) {
         stepsMetadata[i] = { ...stepsMetadata[i], ...payload.patch };
       }
@@ -331,6 +349,7 @@ async function injectContentScripts(tabId) {
         'engine/observer.js',
         'engine/ranker.js',
         'engine/highlighter.js',
+        'engine/pageContext.js',
         'content.js',
       ],
     });
@@ -372,6 +391,67 @@ async function fetchPageContext(tabId) {
     } catch { /* best-effort — caller falls back to URL/title only */ }
   }
   return null;
+}
+
+// ── Link lookahead: prefetch the next page before the user navigates ─────────
+
+const OFFSCREEN_URL     = 'offscreen.html';
+const PREFETCH_TIMEOUT_MS = 6_000;
+
+/**
+ * Ensure the singleton offscreen document exists. A service worker has no
+ * DOM, so DOMParser can't run here directly — the offscreen document is
+ * Chrome's sanctioned place to do that in MV3 (see offscreen.js).
+ */
+async function ensureOffscreenDocument() {
+  if (await chrome.offscreen.hasDocument()) return;
+  await chrome.offscreen.createDocument({
+    url:      OFFSCREEN_URL,
+    reasons:  ['DOM_PARSER'],
+    justification: 'Parse prefetched page HTML to preview the next navigation step.',
+  });
+}
+
+/**
+ * Fetch `url`'s HTML and extract its page context (headings/buttons/inputs/
+ * links) without opening a visible tab, running the destination's scripts,
+ * or affecting any cookies/session state beyond a plain GET — same as a
+ * browser's own link prefetch. Best-effort: returns null on any failure
+ * (network error, non-http(s) URL, non-HTML response, timeout, parse error).
+ * Static-HTML only — pages whose content is rendered by client-side JS after
+ * load won't have much to extract here, which is fine: the caller only uses
+ * this to get a head start, and the existing reactive refineStepForPage
+ * (run after the real navigation completes) remains the source of truth.
+ */
+async function prefetchPageContext(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PREFETCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(parsed.href, { signal: controller.signal, credentials: 'omit' });
+    if (!resp.ok) return null;
+    const contentType = resp.headers.get('content-type') ?? '';
+    if (!contentType.includes('html')) return null;
+    const html = await resp.text();
+
+    await ensureOffscreenDocument();
+    const result = await chrome.runtime.sendMessage({ type: 'NA_PARSE_HTML', html });
+    if (!result?.ok) return null;
+
+    return { pageUrl: parsed.href, pageTitle: result.pageTitle || '', ...result };
+  } catch (err) {
+    console.log(`[NeuroAdapt] Prefetch of ${url} skipped: ${err.message}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Frame fan-out ─────────────────────────────────────────────────────────────
@@ -571,6 +651,14 @@ async function executeCurrentStep() {
         topLabel: result.topLabel,
         frameId:  result.frameId,
       });
+      // Non-blocking: if this step's target is a link, get a head start on
+      // grounding the NEXT step against its real destination page, before
+      // the user has even clicked. Never awaited — must not delay
+      // highlighting the current step's target.
+      if (result.topHref) {
+        maybePrefetchNextStep(currentStepIndex, userGoal, result.topHref)
+          .catch((err) => console.warn('[NeuroAdapt] Lookahead prefetch failed:', err.message));
+      }
     } else {
       const score  = result.topScore;
       const best   = result.topLabel ? `Best guess: "${result.topLabel}" (${score}/100).` : '';
@@ -588,22 +676,73 @@ async function executeCurrentStep() {
   }
 }
 
+/**
+ * Link lookahead: while the user is still on step `fromIndex`'s page, fetch
+ * and ground the NEXT step (fromIndex + 1) against its real destination page
+ * ahead of navigation, so by the time the user actually clicks through,
+ * executeCurrentStep() finds that step already `_refined` and skips the
+ * reactive refine round-trip entirely.
+ *
+ * Fire-and-forget from the caller — every failure mode here (bad URL, network
+ * error, JS-rendered destination with nothing to extract, no LLM confidence)
+ * just means no head start; the existing reactive refineStepForPage in
+ * executeCurrentStep() remains the fallback once real navigation completes.
+ */
+async function maybePrefetchNextStep(fromIndex, expectedGoal, href) {
+  const nextIndex = fromIndex + 1;
+  const nextMeta  = STATE.stepsMetadata[nextIndex];
+  if (!nextMeta || nextMeta._refined || nextMeta._prefetchAttempted) return;
+
+  // Mark immediately (not via transition — this is bookkeeping, not state the
+  // UI needs to react to) so a second STEP_FOUND for the same step (SPA
+  // re-render retry) doesn't fire a duplicate prefetch while this one is
+  // still in flight.
+  nextMeta._prefetchAttempted = true;
+
+  console.log(`[NeuroAdapt] Prefetching step ${nextIndex + 1}'s destination: ${href}`);
+  const prefetched = await prefetchPageContext(href);
+  if (!prefetched) return;
+
+  // Stale-guard: the goal may have been cancelled/replaced, or the user may
+  // have already advanced past the target step, while the fetch + LLM call
+  // were in flight. Discard silently rather than patching state that no
+  // longer corresponds to this goal/step.
+  if (STATE.userGoal !== expectedGoal) return;
+  const current = STATE.stepsMetadata[nextIndex];
+  if (!current || current._refined) return;
+
+  const refined = await refineStepForPage(getApiKey(), current, {
+    pageUrl:   prefetched.pageUrl,
+    pageTitle: prefetched.pageTitle,
+    pageContext: prefetched,
+  });
+
+  if (STATE.userGoal !== expectedGoal) return;
+  const stillCurrent = STATE.stepsMetadata[nextIndex];
+  if (!stillCurrent || stillCurrent._refined) return;
+
+  if (refined) {
+    console.log(`[NeuroAdapt] Lookahead grounded step ${nextIndex + 1}: "${current.targetLabel}" → "${refined.targetLabel}"`);
+  }
+  transition('REFINE_STEP', { stepIndex: nextIndex, patch: { ...(refined ?? {}), _refined: true } });
+}
+
+/**
+ * Arms the content script's one-shot click capture. NA_CAPTURE_CLICK's
+ * response only confirms the listener is now armed — it deliberately does
+ * NOT wait for the actual click. The click itself is an unbounded wait (the
+ * user might take anywhere from a second to several minutes), which is
+ * exactly the kind of gap that gets this service worker evicted for being
+ * idle; a promise held by this specific call would die with it and the
+ * eventual click would go nowhere. Instead, the content script reports the
+ * click via its own independent NA_HITL_CLICKED message (handled in the main
+ * onMessage switch below), which wakes whatever service worker instance is
+ * current at that time — no in-flight state needs to survive the wait.
+ */
 function attachHITLCapture(tabId, step) {
   chrome.tabs.sendMessage(tabId, { type: 'NA_CAPTURE_CLICK' }, { frameId: 0 })
-    .then((clickResult) => {
-      if (!clickResult?.ok) return;
-      // Guard: if auto-retry already succeeded (state is no longer waiting_for_human),
-      // this is a stale click from a previously-active capture listener. Ignore it.
-      if (STATE.status !== 'waiting_for_human') {
-        console.log('[NeuroAdapt] HITL click received but state already resolved — ignoring.');
-        return;
-      }
-      const label = clickResult.text ?? clickResult.ariaLabel ?? clickResult.tag ?? '?';
-      console.log(`[NeuroAdapt] HITL resolved — user clicked: <${clickResult.tag}> "${label}"`);
-      _autoRetryCount = 0; // reset for next step
-      transition('HITL_RESOLVED');
-      transition('ADVANCE_STEP');
-      executeCurrentStep();
+    .then((armed) => {
+      if (!armed?.ok) console.warn('[NeuroAdapt] NA_CAPTURE_CLICK did not arm:', armed?.error);
     })
     .catch((err) => console.warn('[NeuroAdapt] NA_CAPTURE_CLICK failed:', err.message));
 }
@@ -617,6 +756,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log(`[NeuroAdapt] ← "${message.type}" from ${origin}`);
 
   (async () => {
+    await _stateReady; // see _stateReady's definition — must precede every STATE read
+
     switch (message.type) {
 
       // ── State query ────────────────────────────────────────────────────
@@ -749,6 +890,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       }
 
+      // ── User clicked during HITL fallback (see attachHITLCapture) ───────
+      case 'NA_HITL_CLICKED': {
+        // Stale guard: a previous auto-retry may have already resolved this
+        // step (or the goal may have moved on/been cancelled) by the time
+        // this arrives — ignore it rather than corrupting current progress.
+        if (STATE.status !== 'waiting_for_human') {
+          console.log('[NeuroAdapt] HITL click received but state already resolved — ignoring.');
+          sendResponse({ ok: true });
+          break;
+        }
+        const label = message.text ?? message.ariaLabel ?? message.tag ?? '?';
+        console.log(`[NeuroAdapt] HITL resolved — user clicked: <${message.tag}> "${label}"`);
+        _autoRetryCount = 0; // reset for next step
+        transition('HITL_RESOLVED');
+        transition('ADVANCE_STEP');
+        executeCurrentStep();
+        sendResponse({ ok: true });
+        break;
+      }
+
       // ── LLM element identification (called by content script) ──────────
       case 'NA_LLM_IDENTIFY': {
         const result = await identifyElement(
@@ -811,21 +972,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Marks a real top-level navigation in flight for the active tab so
 // NA_ELEMENT_CLICKED's post-click timer knows to stand down (see there).
-chrome.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId }) => {
+// Each listener awaits _stateReady before its first STATE read (see that
+// definition) — these fire on real navigation events, exactly the moments
+// most likely to be waking a service worker Chrome had killed for being idle.
+chrome.webNavigation.onBeforeNavigate.addListener(async ({ tabId, frameId }) => {
   if (frameId !== 0)          return;
+  await _stateReady;
   if (STATE.tabId !== tabId)  return;
   _navInFlight = true;
   clearTimeout(_postClickTimer);
 });
 
-chrome.webNavigation.onErrorOccurred.addListener(({ tabId, frameId }) => {
+chrome.webNavigation.onErrorOccurred.addListener(async ({ tabId, frameId }) => {
   if (frameId !== 0)          return;
+  await _stateReady;
   if (STATE.tabId !== tabId)  return;
   _navInFlight = false; // navigation aborted/failed — don't leave the flag stuck
 });
 
-chrome.webNavigation.onCompleted.addListener(({ tabId, frameId }) => {
+chrome.webNavigation.onCompleted.addListener(async ({ tabId, frameId }) => {
   if (frameId !== 0)                 return;
+  await _stateReady;
   if (STATE.tabId  !== tabId)        return;
   _navInFlight = false;
 
@@ -864,5 +1031,3 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: false })
   .catch((err) => console.warn('[NeuroAdapt] sidePanel.setPanelBehavior:', err));
-
-restoreState();

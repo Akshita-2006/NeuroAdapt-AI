@@ -28,17 +28,30 @@ const STATUS_LABELS = {
 };
 
 // ── Render helpers ────────────────────────────────────────────────────────
-function renderSteps(steps, currentIndex) {
+/**
+ * `stepsMetadata` carries a `_refined` flag per step: true once its
+ * targetLabel has been grounded against a real page (the current page for
+ * step 0, or the actual destination for later steps — see refineStepForPage
+ * in background.js). Steps beyond the current one are usually still sight-
+ * unseen guesses at goal-start time (generateSteps() has to guess what a
+ * not-yet-opened menu/panel will contain) — showing those with the same
+ * plain, confident styling as confirmed steps is what reads as the
+ * assistant asserting menu contents it hasn't actually seen. Unconfirmed
+ * future steps get a distinct "?" / italic treatment instead, so the guess
+ * is visibly a guess until it's actually been checked against the real page.
+ */
+function renderSteps(steps, currentIndex, stepsMetadata) {
   stepsListEl.innerHTML = '';
   if (!steps?.length) return;
 
   steps.forEach((label, i) => {
     const li = document.createElement('li');
-    li.className = 'na-panel__step';
+    const unconfirmed = i > currentIndex && !stepsMetadata?.[i]?._refined;
+    li.className = unconfirmed ? 'na-panel__step na-panel__step--unconfirmed' : 'na-panel__step';
     if      (i < currentIndex)  li.dataset.state = 'done';
     else if (i === currentIndex) li.dataset.state = 'active';
     else                         li.dataset.state = 'pending';
-    li.textContent = label;
+    li.textContent = unconfirmed ? `${label} (to be confirmed)` : label;
     stepsListEl.appendChild(li);
   });
 }
@@ -47,6 +60,7 @@ function renderState(state) {
   const {
     status,
     stepsList,
+    stepsMetadata,
     currentStepIndex,
     topScore,
     topLabel,
@@ -68,7 +82,7 @@ function renderState(state) {
   }
 
   // Step list
-  renderSteps(stepsList, idx);
+  renderSteps(stepsList, idx, stepsMetadata);
 
   // LLM explanation bubble (Phase 5 populates this)
   if (llmExplanation) {

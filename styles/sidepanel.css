@@ -69,6 +69,12 @@ body {
 .na-panel__step[data-state="active"] { color: var(--na-text); border: 1px solid var(--na-blue); }
 .na-panel__step[data-state="active"]::before { content: '▶'; color: var(--na-blue); }
 
+/* Future step whose target hasn't been confirmed against a real page yet —
+   generateSteps() had to guess it sight-unseen. Styled distinctly so it never
+   reads as a settled fact until it's actually been grounded. */
+.na-panel__step--unconfirmed { font-style: italic; }
+.na-panel__step--unconfirmed::before { content: '?'; }
+
 /* ── LLM explanation bubble ──────────────────────── */
 .na-panel__bubble {
   background: var(--na-surface); border: 1px solid var(--na-border);

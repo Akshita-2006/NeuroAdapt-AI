@@ -18,8 +18,9 @@ const fs   = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const PRUNER_SRC = fs.readFileSync(path.join(__dirname, '../../engine/pruner.js'), 'utf8');
-const RANKER_SRC = fs.readFileSync(path.join(__dirname, '../../engine/ranker.js'), 'utf8');
+const PRUNER_SRC  = fs.readFileSync(path.join(__dirname, '../../engine/pruner.js'), 'utf8');
+const RANKER_SRC  = fs.readFileSync(path.join(__dirname, '../../engine/ranker.js'), 'utf8');
+const PAGECTX_SRC = fs.readFileSync(path.join(__dirname, '../../engine/pageContext.js'), 'utf8');
 
 function buildPage({ html, url = 'https://example.test/', title = '' }) {
   const dom = new JSDOM(`<!DOCTYPE html><html><head><title>${title}</title></head><body>${html}</body></html>`, {
@@ -47,6 +48,7 @@ function buildPage({ html, url = 'https://example.test/', title = '' }) {
 
   window.eval(PRUNER_SRC);
   window.eval(RANKER_SRC);
+  window.eval(PAGECTX_SRC);
 
   const pruner = new window.NeuroAdaptEngine.Pruner();
   const ranker = new window.NeuroAdaptEngine.TargetRanker();
@@ -98,68 +100,15 @@ function rankCandidates({ pruner, ranker }, targetHint, alternatives = [], stepM
   return { serialised, refToElement, topDeterministic: candidates[0] ?? null };
 }
 
-/** Mirrors content.js's NA_GET_PAGE_CONTEXT handler (headings/buttons/inputs/tabs). */
+/**
+ * Runs the REAL engine/pageContext.js against the harness's jsdom document —
+ * same production code content.js's NA_GET_PAGE_CONTEXT handler calls, and
+ * the same one offscreen.js calls against prefetched HTML (see
+ * maybePrefetchNextStep() in background.js), so this one function's test
+ * coverage backs both the live-DOM and link-lookahead-prefetch paths.
+ */
 function buildPageContext(document) {
-  const uniq = (arr) => [...new Set(arr.filter(Boolean))];
-  const visible = (el) => {
-    try {
-      const s = document.defaultView.getComputedStyle(el);
-      return s.display !== 'none' && s.visibility !== 'hidden';
-    } catch { return true; }
-  };
-
-  const headings = uniq(
-    [...document.querySelectorAll('h1,h2,h3,[role="heading"]')]
-      .map((el) => el.innerText?.trim().slice(0, 60))
-  ).slice(0, 8);
-
-  const buttons = uniq(
-    [...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a[role="button"]')]
-      .filter(visible)
-      .map((el) => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 50))
-      .filter((t) => t.length > 0 && t.length < 50)
-  ).slice(0, 25);
-
-  const links = uniq(
-    [...document.querySelectorAll('a[href]')]
-      .filter((el) => visible(el) && el.innerText?.trim().length > 0)
-      .map((el) => el.innerText.trim().replace(/\s+/g, ' ').slice(0, 50))
-      .filter((t) => t.length > 1 && t.length < 50)
-  ).slice(0, 20);
-
-  const inputs = uniq(
-    [...document.querySelectorAll('input:not([type="hidden"]),textarea,select,[contenteditable="true"]')]
-      .filter(visible)
-      .map((el) => {
-        const aria = el.getAttribute('aria-label')?.trim();
-        if (aria) return aria;
-        const ph = el.getAttribute('placeholder')?.trim() || el.getAttribute('data-placeholder')?.trim();
-        if (ph) return ph;
-        if (el.id) {
-          const assoc = document.querySelector(`label[for="${el.id}"]`);
-          const t = assoc?.textContent?.trim().replace(/\s+/g, ' ');
-          if (t && t.length < 60) return t;
-        }
-        const wrap = el.closest('label');
-        if (wrap) {
-          const clone = wrap.cloneNode(true);
-          clone.querySelectorAll('input,select,textarea').forEach((n) => n.remove());
-          const t = clone.textContent?.trim().replace(/\s+/g, ' ');
-          if (t && t.length < 60) return t;
-        }
-        return el.getAttribute('name')?.replace(/[-_]/g, ' ').trim() || '';
-      })
-      .filter(Boolean)
-  ).slice(0, 15);
-
-  const tabs = uniq(
-    [...document.querySelectorAll('[role="tab"],[role="menuitem"]')]
-      .filter(visible)
-      .map((el) => (el.innerText || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 50))
-      .filter((t) => t.length > 0 && t.length < 50)
-  ).slice(0, 10);
-
-  return { headings, buttons, links, inputs, tabs };
+  return document.defaultView.NeuroAdaptEngine.extractPageContext(document);
 }
 
 module.exports = { buildPage, rankCandidates, buildPageContext };

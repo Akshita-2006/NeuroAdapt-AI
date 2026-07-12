@@ -12,6 +12,17 @@
  * chance of picking the wrong one — only grounding in the actual page
  * content (refineStepForPage) or LLM semantic reasoning (identifyElement)
  * should reliably land on the correct element.
+ *
+ * Most of these fixtures still have a *correct* deterministic baseline (the
+ * guessed label happens to score highest even before refining) — they test
+ * that the ranker/pruner fixes hold up, and that refineStepForPage doesn't
+ * regress a baseline that was already right. `shipping-speed-decoy` is
+ * deliberately different: its correct answer ("Get it tomorrow") shares no
+ * keywords at all with the guess or its alternatives, while a wrong button
+ * ("Get it in 5 days") fuzzy-matches on "day"/"days" and wins the
+ * deterministic ranking outright. It exists to give refineStepForPage actual
+ * test coverage of the case it's for — rescuing a confidently-wrong guess —
+ * not just re-confirming a guess that was already fine.
  */
 
 const LOGIN_PAGE_HTML = `
@@ -90,6 +101,26 @@ const PAYMENT_HTML = `
       Save card for later
     </label>
     <button id="finalize-order">Ship it</button>
+  </main>`;
+
+const NOTIFICATION_PREFS_HTML = `
+  <main>
+    <h1>Notification Preferences</h1>
+    <label for="field-a">Email notifications</label>
+    <input id="field-a" name="field-a" placeholder="Where to send updates" />
+    <label>
+      <input type="checkbox" id="field-b" name="field-b" />
+      Keep me posted
+    </label>
+    <button id="save-prefs">Save preferences</button>
+  </main>`;
+
+const SHIPPING_HTML = `
+  <main>
+    <h1>Choose delivery method</h1>
+    <button id="opt-a">Get it in 5 days</button>
+    <button id="opt-b">Get it tomorrow</button>
+    <button id="opt-c">I'll wait, that's fine</button>
   </main>`;
 
 module.exports = [
@@ -191,6 +222,58 @@ module.exports = [
           zone: 'main',
         },
         correctSelector: '#finalize-order',
+      },
+    ],
+  },
+
+  {
+    // Exercises a "check" step (not "type"): the genuine checkbox is worded
+    // nothing like the hint ("Keep me posted"), while a plain text field
+    // elsewhere on the page happens to be captioned with the hint's exact
+    // words ("Email notifications"). A keyword-only match would grab the
+    // text field purely on label strength — only recognizing that a
+    // checkbox step structurally cannot resolve to a text input should
+    // save it.
+    name: 'notification-prefs-checkbox',
+    steps: [
+      {
+        page: { url: 'https://acme.test/prefs', title: 'Notification Preferences', html: NOTIFICATION_PREFS_HTML },
+        guessedStep: {
+          hint: 'Turn on email notifications',
+          targetLabel: 'Email notifications',
+          action: 'check',
+          alternatives: ['Enable notifications', 'Notify me', 'Email alerts'],
+          elementType: 'checkbox',
+          zone: 'main',
+        },
+        correctSelector: '#field-b',
+      },
+    ],
+  },
+
+  {
+    // The one fixture where the deterministic baseline is EXPECTED to fail:
+    // "Get it in 5 days" fuzzy-matches "day"/"days" from the "Next day
+    // delivery" alternative and wins the keyword ranking outright, even
+    // though the actually-correct button ("Get it tomorrow") shares no
+    // keywords with the guess or any of its alternatives at all. Only
+    // grounding against the real page — understanding that "tomorrow" means
+    // fastest — recovers the right answer. See test/runAccuracy.js: this is
+    // the case that gives refineStepForPage real test coverage, since every
+    // other scenario's baseline guess was already correct.
+    name: 'shipping-speed-decoy',
+    steps: [
+      {
+        page: { url: 'https://gearup.test/shipping', title: 'Choose delivery method', html: SHIPPING_HTML },
+        guessedStep: {
+          hint: 'Choose the fastest shipping option',
+          targetLabel: 'Express shipping',
+          action: 'click',
+          alternatives: ['Fast shipping', 'Next day delivery', 'Expedited shipping'],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#opt-b',
       },
     ],
   },
