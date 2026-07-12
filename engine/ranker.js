@@ -38,7 +38,8 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     back:          ['back','previous','prev','return','go back'],
     cancel:        ['cancel','close','dismiss','abort','discard','never mind','no thanks','skip'],
     search:        ['search','find','look up','query','search for','search here'],
-    buy:           ['buy','purchase','order','add to cart','add to bag','shop now','buy now','checkout','check out','add to basket','buy it now','proceed to checkout','continue to checkout','go to checkout','place order','complete order','confirm order','view cart','view bag','cart','bag'],
+    buy:           ['buy','purchase','order','shop now','buy now','checkout','check out','buy it now','proceed to checkout','continue to checkout','go to checkout','place order','complete order','confirm order'],
+    cart:          ['add to cart','add to bag','add to basket','view cart','view bag','cart','bag'],
     play:          ['play','watch','watch now','play video','start video'],
     download:      ['download','save file','export','get file'],
     upload:        ['upload','attach','import','add file','choose file','browse files','select file'],
@@ -322,6 +323,11 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       node.value,                        // input[type=submit] value="Sign In"
       node.href?.replace(/[-_/]/g, ' '), // link href text (e.g. /sign-in → sign in)
     ].filter(Boolean).join(' '));
+    // Padded so phrase matches below only count on word boundaries — an
+    // unpadded allText.includes(phrase) would let short phrases like "pin"
+    // or "go" match as a substring inside unrelated words ("Pinterest",
+    // "Google"), not just as the standalone word/phrase they're meant to be.
+    const paddedText = ` ${allText} `;
 
     // Exact match on primary label — the node's own label IS the hint, not
     // just a longer string that happens to contain it somewhere.
@@ -331,7 +337,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     let matched = 0;
     for (const token of contentTokens) {
       const synonymPhrases = getSynonymPhrases(token);
-      const hit = synonymPhrases.some((phrase) => allText.includes(phrase));
+      const hit = synonymPhrases.some((phrase) => paddedText.includes(` ${phrase} `));
       if (hit) {
         matched++;
       } else {
@@ -414,17 +420,22 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     // that's authoritative. Otherwise fall back to (b), which can match,
     // mismatch (penalized), or be absent entirely (neutral).
     let tagResolved = false;
-    for (const typeKey of typeHints) {
-      if (SOFT_TYPE_KEYWORDS.has(typeKey)) continue; // soft keywords resolved via (b) below
-      if (TYPE_MAP[typeKey]?.(node)) {
+    const hardTypeHints = [...typeHints].filter((t) => !SOFT_TYPE_KEYWORDS.has(t));
+    if (hardTypeHints.length) {
+      // Match if the node satisfies ANY of the hard type keywords in the hint
+      // — a hint can legitimately name more than one acceptable element type
+      // ("Radio or checkbox", "Continue button or link"), and checking only
+      // the first-encountered keyword would wrongly penalize a node that
+      // fails that one but satisfies another.
+      const matchedKey = hardTypeHints.find((typeKey) => TYPE_MAP[typeKey]?.(node));
+      if (matchedKey) {
         score += WEIGHTS.tagMatch;
-        reasons.push(`tag matches type "${typeKey}" +${WEIGHTS.tagMatch}`);
+        reasons.push(`tag matches type "${matchedKey}" +${WEIGHTS.tagMatch}`);
       } else {
         score += WEIGHTS.tagPenalty;
         reasons.push(`wrong element type ${WEIGHTS.tagPenalty}`);
       }
       tagResolved = true;
-      break;
     }
 
     if (!tagResolved) {
@@ -505,8 +516,9 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       `${node.id?.replace(/[-_]/g, ' ') ?? ''} ${node.name?.replace(/[-_]/g, ' ') ?? ''}`
     );
     if (attrText.trim()) {
+      const paddedAttrText = ` ${attrText} `;
       const hit = contentTokens.some((t) =>
-        getSynonymPhrases(t).some((p) => attrText.includes(p))
+        getSynonymPhrases(t).some((p) => paddedAttrText.includes(` ${p} `))
       );
       if (hit) { score += WEIGHTS.attrMatch; reasons.push(`id/name match +${WEIGHTS.attrMatch}`); }
     }

@@ -123,6 +123,62 @@ const SHIPPING_HTML = `
     <button id="opt-c">I'll wait, that's fine</button>
   </main>`;
 
+const PRODUCT_PAGE_HTML = `
+  <main>
+    <h1>Wireless Headphones</h1>
+    <button id="opt-a">Add to Cart</button>
+    <button id="opt-b">Buy Now</button>
+  </main>`;
+
+const CONTACT_DETAILS_HTML = `
+  <main>
+    <h1>Contact Details</h1>
+    <input id="field-a" type="email" name="field-a" />
+    <button type="submit" id="field-b">Continue</button>
+  </main>`;
+
+const NEWSLETTER_SIBLING_HTML = `
+  <main>
+    <h1>Preferences</h1>
+    <div><input type="checkbox" id="field-b" name="opt2" /><label>Enable dark mode</label></div>
+    <div><input type="checkbox" id="field-a" name="opt1" /><label>Subscribe to newsletter</label></div>
+  </main>`;
+
+const SHOP_FILTERS_HTML = `
+  <main>
+    <h1>Shop</h1>
+    <select id="field-b">
+      <option>Filter by price: Low to High</option>
+      <option>Filter by price: High to Low</option>
+    </select>
+    <select id="field-a" name="price-range"><option>USD</option><option>EUR</option></select>
+  </main>`;
+
+const AGREEMENT_HTML = `
+  <main>
+    <h1>Preferences</h1>
+    <label><input type="checkbox" id="field-a" name="agree" />I agree to the terms</label>
+    <label><input type="radio" id="field-b" name="pref" />Prefer email contact</label>
+  </main>`;
+
+const SOCIAL_SETTINGS_HTML = `
+  <main>
+    <h1>Account Settings</h1>
+    <input id="field-a" placeholder="Pinterest handle" name="field-a" />
+    <input id="field-b" placeholder="PIN" name="field-b" />
+  </main>`;
+
+const NEWSLETTER_TOGGLE_HTML = `
+  <main>
+    <h1>Preferences</h1>
+    <label class="toggle-switch">
+      <input type="checkbox" id="subscribe" style="opacity:0;position:absolute;" />
+      <span class="toggle-slider"></span>
+      Subscribe to newsletter
+    </label>
+    <button id="no-thanks">No thanks</button>
+  </main>`;
+
 module.exports = [
   {
     name: 'login-portal',
@@ -274,6 +330,194 @@ module.exports = [
           zone: 'main',
         },
         correctSelector: '#opt-b',
+      },
+    ],
+  },
+
+  {
+    // Regression test for the buy/cart synonym-cluster split (SYNONYM_CLUSTERS
+    // in engine/ranker.js). "Add to Cart" and "Buy Now" are two distinct,
+    // simultaneously-visible actions on a real product page. Neither label
+    // exactly matches the deliberately ambiguous single-token hint "Buy", so
+    // both candidates are scored purely through the fuzzy synonym-matching
+    // loop. Before the fix, "add to cart" was listed as a literal synonym
+    // phrase of "buy", so both buttons tied on label similarity and the
+    // ranker fell back to DOM order — silently picking the wrong (first)
+    // button. After the fix, only "Buy Now" matches.
+    name: 'buy-now-vs-add-to-cart',
+    steps: [
+      {
+        page: { url: 'https://gearup.test/product/42', title: 'Wireless Headphones', html: PRODUCT_PAGE_HTML },
+        guessedStep: {
+          hint: 'Click the Buy Now button',
+          targetLabel: 'Buy',
+          action: 'click',
+          alternatives: [],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#opt-b',
+      },
+    ],
+  },
+
+  {
+    // Regression test for isRendered()'s opacity:0 filter (engine/pruner.js).
+    // Custom checkbox/toggle widgets commonly hide the native <input>
+    // visually via opacity:0 while a styled sibling (here .toggle-slider)
+    // acts as the visible control — a standard "visually hidden but still
+    // focusable/interactive" technique, not a genuinely-invisible element.
+    // Before the fix, isRendered() dropped the checkbox outright (unlike
+    // display:none/visibility:hidden, opacity:0 doesn't block interaction),
+    // so this widget never reached the ranker as a candidate at all.
+    name: 'hidden-checkbox-toggle',
+    steps: [
+      {
+        page: { url: 'https://acme.test/preferences', title: 'Preferences', html: NEWSLETTER_TOGGLE_HTML },
+        guessedStep: {
+          hint: 'Subscribe to the newsletter',
+          targetLabel: 'Subscribe to newsletter',
+          action: 'check',
+          alternatives: [],
+          elementType: 'checkbox',
+          zone: 'main',
+        },
+        correctSelector: '#subscribe',
+      },
+    ],
+  },
+
+  {
+    // Regression test for labelSimilarity()'s substring matching
+    // (engine/ranker.js). The primary phrase-match check used raw
+    // `allText.includes(phrase)` with no word-boundary anchoring, so a short
+    // synonym-cluster phrase like "pin" (from the pincode cluster) matched
+    // as a substring inside unrelated words — "Pinterest handle" contains
+    // "pin" even though it has nothing to do with PIN codes. Both fields
+    // share the same tag/type and neutral ids (#field-a/#field-b) so neither
+    // structural signals nor id/name leakage can decide the pick — it hinges
+    // entirely on label similarity. The decoy is placed first in the DOM so
+    // a tie (the pre-fix bug) resolves to the wrong one.
+    name: 'pin-substring-decoy',
+    steps: [
+      {
+        page: { url: 'https://acme.test/settings/social', title: 'Account Settings', html: SOCIAL_SETTINGS_HTML },
+        guessedStep: {
+          hint: 'Type your PIN code',
+          targetLabel: 'PIN code',
+          action: 'type',
+          alternatives: [],
+          elementType: 'input',
+          zone: 'main',
+        },
+        correctSelector: '#field-b',
+      },
+    ],
+  },
+
+  {
+    // Regression test for the hard-type-keyword loop in scoreNode()
+    // (engine/ranker.js). "email"/"phone" are SOFT_TYPE_KEYWORDS, whose loop
+    // already evaluates all candidates correctly (only breaks on success) —
+    // so this doesn't actually exercise the bug (kept as a sanity check that
+    // soft-keyword resolution stays correct). The real bug needs two HARD
+    // type keywords, see 'continue-button-or-link' below.
+    name: 'phone-or-email-type-conflict',
+    steps: [
+      {
+        page: { url: 'https://acme.test/contact', title: 'Contact Details', html: CONTACT_DETAILS_HTML },
+        guessedStep: {
+          hint: 'Enter your phone or email',
+          targetLabel: 'Phone or email',
+          action: 'type',
+          alternatives: [],
+          elementType: 'input',
+          zone: 'main',
+        },
+        correctSelector: '#field-a',
+      },
+    ],
+  },
+
+  {
+    // Regression test for the hard-type-keyword loop in scoreNode()
+    // (engine/ranker.js). The loop checked only the FIRST hard type keyword
+    // found (Set/token order = hint word order) and broke immediately, even
+    // if it failed to match. Hint "Radio or checkbox" checks "radio" first:
+    // the genuine <input type="checkbox"> target fails that check and gets
+    // wrongly penalized -10, never reaching "checkbox" (which it does
+    // satisfy) — while the radio decoy matches "radio" immediately either
+    // way. Neither candidate's label text overlaps the hint's content
+    // tokens (["radio","checkbox"], since both fall back to raw tokens once
+    // PURE_TYPE_DESCRIPTORS strips them from "content"), so label similarity
+    // stays 0 for both — only the type-keyword handling decides the pick.
+    name: 'radio-or-checkbox-type-conflict',
+    steps: [
+      {
+        page: { url: 'https://acme.test/preferences', title: 'Preferences', html: AGREEMENT_HTML },
+        guessedStep: {
+          hint: 'Check the Radio or checkbox option',
+          targetLabel: 'Radio or checkbox',
+          action: 'check',
+          alternatives: [],
+          elementType: 'checkbox',
+          zone: 'main',
+        },
+        correctSelector: '#field-a',
+      },
+    ],
+  },
+
+  {
+    // Regression test for resolveLabel()'s adjacent-sibling fallback
+    // (engine/pruner.js). The checkbox has no id/for-based label association
+    // and isn't wrapped by a <label> — the label is a plain FOLLOWING
+    // sibling (a common real-world pattern), which the fallback chain
+    // couldn't see (it only checked previousElementSibling). Without it,
+    // resolution falls all the way through to the generic `name="opt1"`
+    // attribute, which shares no words with the hint, so the confidence
+    // score lands below MIN_CONFIDENCE even though this is the only
+    // candidate on the page.
+    name: 'checkbox-label-after-sibling',
+    steps: [
+      {
+        page: { url: 'https://acme.test/preferences2', title: 'Preferences', html: NEWSLETTER_SIBLING_HTML },
+        guessedStep: {
+          hint: 'Subscribe to the newsletter',
+          targetLabel: 'Subscribe to newsletter',
+          action: 'check',
+          alternatives: [],
+          elementType: 'checkbox',
+          zone: 'main',
+        },
+        correctSelector: '#field-a',
+      },
+    ],
+  },
+
+  {
+    // Regression test for resolveLabel()'s own-text fallback treating a
+    // <select>'s textContent (the concatenation of every <option>'s text)
+    // as a usable label (engine/pruner.js). Unlike buttons/links, a
+    // <select>'s "own text" is never a real label — it's whatever options
+    // happen to be inside it, which can coincidentally contain unrelated
+    // hint keywords ("Price: Low to High" contains "price" twice) and steal
+    // false credit from the actual price-related dropdown elsewhere on the
+    // page. Both candidates are <select> elements so structural signals are
+    // equal — only the label text differs.
+    name: 'select-option-soup-decoy',
+    steps: [
+      {
+        page: { url: 'https://acme.test/shop', title: 'Shop', html: SHOP_FILTERS_HTML },
+        guessedStep: {
+          hint: 'Filter results by price',
+          targetLabel: 'Filter by price',
+          action: 'select',
+          alternatives: [],
+          elementType: 'dropdown',
+          zone: 'main',
+        },
+        correctSelector: '#field-a',
       },
     ],
   },

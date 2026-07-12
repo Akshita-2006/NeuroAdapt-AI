@@ -92,7 +92,14 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       const style = window.getComputedStyle(el);
       if (style.display    === 'none')       return false;
       if (style.visibility === 'hidden')     return false;
-      if (parseFloat(style.opacity) === 0)   return false;
+      // Checkbox/radio inputs are routinely hidden via opacity:0 while a
+      // styled sibling acts as the visible control (the standard "visually
+      // hidden but still focusable" technique for custom checkboxes/toggles).
+      // Unlike display:none/visibility:hidden, opacity:0 doesn't block
+      // interaction, so only exempt this specific widget type from the check.
+      const isCheckboxOrRadio = el.tagName === 'INPUT' &&
+        (el.type === 'checkbox' || el.type === 'radio');
+      if (!isCheckboxOrRadio && parseFloat(style.opacity) === 0) return false;
       if (style.pointerEvents === 'none' &&
           !el.getAttribute('tabindex') &&
           el.tagName !== 'A' &&
@@ -153,12 +160,19 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
 
     // 6. Own visible text — checked BEFORE adjacent-sibling heuristics below.
     //    Buttons/links normally carry their own label as text content (e.g.
-    //    <button>Skip for now</button>); bare <input>/<select>/<textarea>
-    //    never have textContent, so this is a no-op for them and they still
-    //    fall through to the adjacent-label rules that follow.
-    const ownText = el.innerText?.trim().replace(/\s+/g, ' ').slice(0, 80) ||
-                    el.textContent?.trim().replace(/\s+/g, ' ').slice(0, 80);
-    if (ownText) return ownText;
+    //    <button>Skip for now</button>); bare <input>/<textarea> never have
+    //    textContent, so this is a no-op for them and they still fall
+    //    through to the adjacent-label rules that follow. <select> is
+    //    excluded here on purpose: its textContent is always the
+    //    concatenation of every <option>'s text, never a real label, and
+    //    treating it as one can steal false keyword credit from unrelated
+    //    hints (e.g. a "sort by price" dropdown's options coincidentally
+    //    contain the word "price").
+    if (tag !== 'select') {
+      const ownText = el.innerText?.trim().replace(/\s+/g, ' ').slice(0, 80) ||
+                      el.textContent?.trim().replace(/\s+/g, ' ').slice(0, 80);
+      if (ownText) return ownText;
+    }
 
     // 7. Adjacent preceding <label> sibling (common pattern: <label>Email</label><input>)
     const prevSib = el.previousElementSibling;
@@ -166,6 +180,15 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       const t = prevSib.textContent?.trim();
       if (t) return t;
     }
+
+    // 7b. Adjacent following <label> sibling (common pattern for checkboxes/
+    // radios: <input type="checkbox"><label>Subscribe</label>, no shared id/for)
+    const nextSib = el.nextElementSibling;
+    if (nextSib?.tagName === 'LABEL') {
+      const t = nextSib.textContent?.trim();
+      if (t) return t;
+    }
+
 
     // 8. Adjacent preceding text-carrying sibling (spans, divs used as labels)
     if (prevSib && ['SPAN','DIV','P','STRONG','B'].includes(prevSib.tagName)) {
@@ -221,10 +244,28 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     return '';
   }
 
+  // ── Shadow-DOM-aware parent walk ───────────────────────────────────────────
+
+  /**
+   * Like el.parentElement, but continues across a shadow root boundary via
+   * shadowRoot.host instead of stopping there. A node whose parent is the
+   * shadow root itself (i.e. a top-level child inside a web component's
+   * shadow tree) has parentElement === null, even though the component host
+   * has real ancestors (header, nav, etc.) in the light DOM — without this,
+   * zone/heading classification silently defaults to 'content'/null for any
+   * element inside a shadow root.
+   */
+  function effectiveParent(node) {
+    const parent = node.parentElement;
+    if (parent) return parent;
+    const root = node.getRootNode?.();
+    return root?.host ?? null;
+  }
+
   // ── Parent heading / section ──────────────────────────────────────────────
 
   function resolveParentHeading(el) {
-    let node = el.parentElement;
+    let node = effectiveParent(el);
     while (node && node !== document.body) {
       const heading = node.querySelector(
         ':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6'
@@ -240,7 +281,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
         const legend = node.querySelector(':scope > legend')?.textContent?.trim();
         if (legend) return legend.slice(0, 50);
       }
-      node = node.parentElement;
+      node = effectiveParent(node);
     }
     return null;
   }
@@ -303,7 +344,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
    * (login buttons are in headers, form submits are in main content, etc.).
    */
   function resolveZone(el) {
-    let node = el.parentElement;
+    let node = effectiveParent(el);
     while (node && node !== document.body) {
       const tag  = node.tagName?.toLowerCase() ?? '';
       const role = node.getAttribute?.('role') ?? '';
@@ -337,7 +378,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
         return 'nav';
       }
 
-      node = node.parentElement;
+      node = effectiveParent(node);
     }
     return 'content';
   }
@@ -408,7 +449,15 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
       ariaLabel:     el.getAttribute('aria-label') || null,
       placeholder:   el.getAttribute('placeholder')|| null,
       href:          el.getAttribute('href')        || null,
-      value:         el.value != null ? String(el.value) : null,
+      // A <select>'s .value defaults to its first <option>'s value/text even
+      // when nothing is meaningfully selected — that's incidental DOM
+      // behavior, not a real label, so exclude it (same reasoning as the
+      // ownText exclusion in resolveLabel() above).
+      // A <select>'s .value defaults to its first <option>'s value/text even
+      // when nothing is meaningfully selected — that's incidental DOM
+      // behavior, not a real label, so exclude it (same reasoning as the
+      // ownText exclusion in resolveLabel() above).
+      value:         (tag !== 'select' && el.value != null) ? String(el.value) : null,
       parentHeading: resolveParentHeading(el),
       htmlSnippet:   extractHtmlSnippet(el),        // NEW: compact sanitised HTML
       zone:          resolveZone(el),               // NEW: header|footer|main|nav|sidebar|modal|content

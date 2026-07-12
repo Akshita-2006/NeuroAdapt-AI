@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node test/runDeterministic.js)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"console.log\\('placeholder'\\)\")",
+      "Bash(grep -n \"effectiveParent\\\\|plainParent\" /tmp/pruner_prefix_test.js | head -20)",
+      "Read(//c/tmp/**)",
+      "Bash(mkdir -p \"C:/Users/tusha/AppData/Local/Temp/claude/c--neuro-2-NeuroAdapt-AI/22bf809b-70f4-4cca-83d9-7dccb390dd07/scratchpad\")",
+      "Bash(rm -f \"C:/Users/tusha/AppData/Local/Temp/claude/c--neuro-2-NeuroAdapt-AI/22bf809b-70f4-4cca-83d9-7dccb390dd07/scratchpad/pruner_prefix_test.js\")",
+      "Bash(grep -n \"^## Backlog\\\\|^- \\\\*\\\\*\\\\|^- \\\\`\" \"C:\\\\Users\\\\tusha\\\\.claude\\\\plans\\\\the-architecture-is-stable-cheerful-dragon.md\")"
+    ]
+  }
+}
