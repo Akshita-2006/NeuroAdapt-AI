@@ -161,6 +161,13 @@ const AGREEMENT_HTML = `
     <label><input type="radio" id="field-b" name="pref" />Prefer email contact</label>
   </main>`;
 
+const CHECKOUT_MULTISTEP_HTML = `
+  <main>
+    <section><h2>Shipping Address</h2><button id="field-a" type="submit">Continue</button></section>
+    <section><h2>Payment Details</h2><button id="field-b" type="submit">Continue</button></section>
+    <section><h2>Review Order</h2><button id="field-c" type="submit">Continue</button></section>
+  </main>`;
+
 const SOCIAL_SETTINGS_HTML = `
   <main>
     <h1>Account Settings</h1>
@@ -518,6 +525,33 @@ module.exports = [
           zone: 'main',
         },
         correctSelector: '#field-a',
+      },
+    ],
+  },
+
+  {
+    // Regression test for the duplicate-label heading-disambiguation bonus
+    // (engine/ranker.js, scoreNode's "DUPLICATE LABEL PENALTY" section). Three
+    // identically-labeled "Continue" buttons sit in three different sections
+    // of a multi-section checkout page — a common real-world pattern
+    // (multi-step forms, accordions, review pages). A hint that names the
+    // right section by content ("Continue to payment") should win by a
+    // clear, noise-safe margin, not a narrow one — parentHeading already
+    // contributed a little via the general label-similarity blob before this
+    // fix, but this scenario locks in that the margin stays healthy.
+    name: 'checkout-duplicate-continue-buttons',
+    steps: [
+      {
+        page: { url: 'https://acme.test/checkout', title: 'Checkout', html: CHECKOUT_MULTISTEP_HTML },
+        guessedStep: {
+          hint: 'Continue to payment',
+          targetLabel: 'Continue to payment',
+          action: 'click',
+          alternatives: [],
+          elementType: 'button',
+          zone: 'main',
+        },
+        correctSelector: '#field-b',
       },
     ],
   },

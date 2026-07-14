@@ -68,6 +68,11 @@ let STATE = { ...DEFAULT_STATE, lastUpdated: Date.now() };
 
 const MIN_CONFIDENCE    = 25;  // lowered from 40 — deterministic scores of 25-39 are usable
 const POST_NAV_DELAY_MS = 1500;
+const MAX_REFINE_ATTEMPTS = 2; // cap retries on a transient refine failure (slow-loading
+                                // page, network hiccup) before permanently accepting the
+                                // pre-navigation guess — avoids retrying forever on a
+                                // genuinely ungroundable page while not treating the
+                                // first failure as final
 
 // Execution lock — ensures only one executeCurrentStep() runs at a time.
 let _executing      = false;
@@ -490,7 +495,7 @@ async function rankAcrossFrames(tabId, targetHint, tooltip, stepMeta = null) {
         type:          'NA_RANK',
         targetHint,
         tooltip,
-        minScore:      1,
+        minScore:      MIN_CONFIDENCE,
         alternatives:  stepMeta?.alternatives  ?? [],
         elementType:   stepMeta?.elementType   ?? null,
         preferredZone: stepMeta?.zone          ?? null,
@@ -594,7 +599,10 @@ async function executeCurrentStep() {
     // beyond the first sight-unseen ("future pages" in its prompt). Refine
     // once per step (not once per navigation): if two steps land on the same
     // new page, each still gets its own grounding the first time it runs.
-    if (stepMeta && !stepMeta._refined) {
+    // A failed attempt (empty page context, no LLM match) retries up to
+    // MAX_REFINE_ATTEMPTS times rather than permanently freezing on the
+    // first transient failure — see MAX_REFINE_ATTEMPTS above.
+    if (stepMeta && !stepMeta._refined && (stepMeta._refineAttempts ?? 0) < MAX_REFINE_ATTEMPTS) {
       let pageUrl = '', pageTitle = '';
       try {
         const tab = await chrome.tabs.get(tabId);
@@ -607,7 +615,11 @@ async function executeCurrentStep() {
         ? await refineStepForPage(getApiKey(), stepMeta, { pageUrl, pageTitle, pageContext })
         : null;
 
-      transition('REFINE_STEP', { patch: { ...(refined ?? {}), _refined: true } });
+      const attempts = (stepMeta._refineAttempts ?? 0) + 1;
+      const patch = refined
+        ? { ...refined, _refined: true }
+        : { _refineAttempts: attempts, _refined: attempts >= MAX_REFINE_ATTEMPTS };
+      transition('REFINE_STEP', { patch });
       stepMeta = STATE.stepsMetadata[currentStepIndex];
     }
 
@@ -724,7 +736,15 @@ async function maybePrefetchNextStep(fromIndex, expectedGoal, href) {
   if (refined) {
     console.log(`[NeuroAdapt] Lookahead grounded step ${nextIndex + 1}: "${current.targetLabel}" → "${refined.targetLabel}"`);
   }
-  transition('REFINE_STEP', { stepIndex: nextIndex, patch: { ...(refined ?? {}), _refined: true } });
+  // Same bounded-retry accounting as executeCurrentStep()'s reactive refine
+  // (shared _refineAttempts counter) — a failed prefetch attempt shouldn't
+  // permanently freeze the step before the user even navigates there; the
+  // reactive path gets to retry once real navigation happens.
+  const attempts = (stillCurrent._refineAttempts ?? 0) + 1;
+  const patch = refined
+    ? { ...refined, _refined: true }
+    : { _refineAttempts: attempts, _refined: attempts >= MAX_REFINE_ATTEMPTS };
+  transition('REFINE_STEP', { stepIndex: nextIndex, patch });
 }
 
 /**
@@ -924,8 +944,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         );
 
         // Validation pass: if the LLM's confidence is low (< 45%), make a
-        // second call to verify or find a better-matching candidate.
-        if (result?.ref && (result.confidence ?? 100) < 45) {
+        // second call to verify or find a better-matching candidate. A
+        // missing confidence field (malformed/truncated response) defaults
+        // to 0, not 100 — an incomplete response deserves more scrutiny, not
+        // an automatic pass.
+        if (result?.ref && (result.confidence ?? 0) < 45) {
           console.log(
             `[NeuroAdapt] Low LLM confidence (${result.confidence}%) — running validation pass.`
           );

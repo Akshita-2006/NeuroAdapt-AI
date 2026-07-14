@@ -12,6 +12,9 @@
  *   Attribute match    0 –  5  id / name match
  *   Prominence         0 –  5  element width → main input vs icon button
  *   Duplicate penalty  0 – –8  elements sharing an identical label on the page
+ *   Heading disambig.  0 – 12  duplicate-label case only: dedicated bonus when the
+ *                              hint names the enclosing section/heading, on top of
+ *                              its (diluted) contribution inside label similarity
  *
  * Critical fix (v3): synonym expansion now works for multi-word phrases.
  *   The prior bug: "_tokenize() removes noise words before synonym lookup,
@@ -221,6 +224,7 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     prominenceMid:     2,
     duplicatePenalty: -8,
     zoneMatch:         8,
+    headingDisambig:  12,   // scaled by match ratio — only applied when isDuplicateLabel
   };
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -536,6 +540,24 @@ window.NeuroAdaptEngine = window.NeuroAdaptEngine || {};
     if (meta.isDuplicateLabel && score > 0) {
       score += WEIGHTS.duplicatePenalty;
       reasons.push(`duplicate label on page ${WEIGHTS.duplicatePenalty}`);
+
+      // When several elements share an identical label ("Continue", "Submit"),
+      // the enclosing section/heading is often the only thing that tells them
+      // apart. It already contributes indirectly via labelSimilarity's allText
+      // blob, but diluted among several other fields — give it a dedicated,
+      // separately-weighted bonus here so a hint that does name the right
+      // section wins by a clearer, noise-safer margin instead of a narrow one.
+      if (node.parentHeading && !categoricalMismatch) {
+        const headingText  = ` ${_norm(node.parentHeading)} `;
+        const headingMatches = contentTokens.filter((t) =>
+          getSynonymPhrases(t).some((p) => headingText.includes(` ${p} `))
+        );
+        if (headingMatches.length) {
+          const pts = Math.round((headingMatches.length / contentTokens.length) * WEIGHTS.headingDisambig);
+          score += pts;
+          reasons.push(`heading disambiguation "${node.parentHeading}" +${pts}`);
+        }
+      }
     }
 
     // ── 9. ZONE PREFERENCE (0–8) ───────────────────────────────────────────

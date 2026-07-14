@@ -264,7 +264,11 @@ function initNeuroAdapt() {
 
           if (llmResult?.ref) {
             winRef    = llmResult.ref;
-            winScore  = llmResult.confidence ?? 80;
+            // A missing confidence field (malformed/truncated LLM response)
+            // defaults to 0, not 80 — treat an incomplete response as
+            // untrusted rather than as a strong match, so it correctly
+            // routes to HITL instead of sailing past the confidence gate.
+            winScore  = llmResult.confidence ?? 0;
             winLabel  = candidates.find((c) => c.node.ref === winRef)?.node?.label ?? winRef;
             winSource = 'llm';
             console.log(`[NeuroAdapt] LLM winner: "${winLabel}" (${winScore}%) — ${llmResult.reason}`);
