@@ -125,6 +125,23 @@ function initNeuroAdapt() {
           tree = pruner.prune();
           const tPrune = performance.now() - t0;
 
+          // ── Early exit if page is empty ─────────────────────────────────────
+          // Checked before ranking (not after) — an empty tree means there's
+          // nothing for ranker.rank() to score, so calling it per-hint below
+          // would just log a redundant "empty tree" warning for each hint
+          // (main + up to 3 alternatives) without ever producing a candidate.
+          // Common on slow SPAs (e.g. uidai.gov.in) where NA_RANK fires before
+          // client-side rendering has produced any actionable elements yet —
+          // background.js's auto-retry will re-prune once the DOM settles.
+          if (tree.length === 0) {
+            highlighter.clear();
+            sendResponse({
+              ok: true, frame: window.location.href,
+              topRef: null, topScore: 0, confident: false, source: 'none',
+            });
+            return;
+          }
+
           // ── Stage 1: multi-hint expansion ──────────────────────────────
           // Rank against all hint phrasings (main + alternatives) and merge
           // by best score per element. This handles synonym/paraphrase misses
@@ -147,16 +164,6 @@ function initNeuroAdapt() {
             .slice(0, 30);
 
           const tRank = performance.now() - t0 - tPrune;
-
-          // ── Early exit if page is empty ─────────────────────────────────────
-          if (tree.length === 0) {
-            highlighter.clear();
-            sendResponse({
-              ok: true, frame: window.location.href,
-              topRef: null, topScore: 0, confident: false, source: 'none',
-            });
-            return;
-          }
 
           // ── Universal viewport supplement ───────────────────────────────────
           // ALWAYS include every in-viewport interactive element in the LLM pool,
